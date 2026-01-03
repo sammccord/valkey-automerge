@@ -1,5 +1,5 @@
 """
-Concurrent access tests for Redis-Automerge.
+Concurrent access tests for valkey-automerge.
 
 Tests concurrent operations on the same document to verify CRDT behavior.
 """

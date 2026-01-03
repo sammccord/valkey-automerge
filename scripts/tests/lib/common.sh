@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Common test utilities for Redis Automerge Module tests
+# Common test utilities for Valkey Automerge Module tests
 
-# Redis host configuration
-HOST="${REDIS_HOST:-127.0.0.1}"
+# Valkey host configuration
+HOST="${VALKEY_HOST:-127.0.0.1}"
 
 # Color output for better readability
 RED='\033[0;31m'
@@ -38,7 +38,7 @@ test_notification() {
     local output_file="/tmp/notif_test_$$.txt"
 
     # Start subscriber in background with timeout (1 second)
-    timeout 1 redis-cli -h "$HOST" PSUBSCRIBE "__keyspace@0__:$key" > "$output_file" 2>&1 &
+    timeout 1 valkey-cli -h "$HOST" PSUBSCRIBE "__keyspace@0__:$key" > "$output_file" 2>&1 &
     local sub_pid=$!
 
     # Wait for subscription to be ready
@@ -72,7 +72,7 @@ test_change_publication() {
     local output_file="/tmp/change_pub_$$.txt"
 
     # Subscribe to changes channel
-    timeout 2 redis-cli -h "$HOST" SUBSCRIBE "changes:$key" > "$output_file" 2>&1 &
+    timeout 2 valkey-cli -h "$HOST" SUBSCRIBE "changes:$key" > "$output_file" 2>&1 &
     local sub_pid=$!
     sleep 0.3
 
@@ -107,13 +107,13 @@ setup_test_env() {
     fi
 
     # Check server connection
-    if ! redis-cli -h "$HOST" ping > /dev/null 2>&1; then
-        echo "❌ Cannot connect to Redis at $HOST"
+    if ! valkey-cli -h "$HOST" ping > /dev/null 2>&1; then
+        echo "❌ Cannot connect to Valkey at $HOST"
         exit 1
     fi
 
     # Clear any persisted data
-    redis-cli -h "$HOST" flushall > /dev/null 2>&1
+    valkey-cli -h "$HOST" flushall > /dev/null 2>&1
 
     echo "✓ Test environment ready"
 }
@@ -127,22 +127,22 @@ print_section() {
     echo "========================================="
 }
 
-# Helper function to restart Redis
+# Helper function to restart Valkey
 # Uses DEBUG RESTART which simulates a server restart by reloading from AOF/RDB
-restart_redis() {
-    echo "   Restarting Redis (DEBUG RESTART)..."
-    # DEBUG RESTART will cause Redis to reload from AOF/RDB
+restart_valkey() {
+    echo "   Restarting Valkey (DEBUG RESTART)..."
+    # DEBUG RESTART will cause Valkey to reload from AOF/RDB
     # It will disconnect us, so we need to handle the error
-    redis-cli -h "$HOST" DEBUG RESTART > /dev/null 2>&1 || true
+    valkey-cli -h "$HOST" DEBUG RESTART > /dev/null 2>&1 || true
     sleep 2
 
-    # Wait for Redis to be ready
+    # Wait for Valkey to be ready
     for i in {1..15}; do
-        if redis-cli -h "$HOST" ping > /dev/null 2>&1; then
+        if valkey-cli -h "$HOST" ping > /dev/null 2>&1; then
             return 0
         fi
         sleep 1
     done
-    echo "   ✗ Redis failed to restart"
+    echo "   ✗ Valkey failed to restart"
     return 1
 }

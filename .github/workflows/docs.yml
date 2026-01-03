@@ -2,9 +2,9 @@ name: Documentation
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 permissions:
   contents: write
@@ -35,22 +35,22 @@ jobs:
           RUN git clone --depth 1 --branch js/automerge-3.1.2 https://github.com/automerge/automerge.git /build/automerge-src
 
           # Copy project files
-          COPY redis-automerge/ ./redis-automerge/
+          COPY valkey-automerge/ ./valkey-automerge/
 
           # Update Cargo.toml to use local automerge
-          RUN cd redis-automerge && \
+          RUN cd valkey-automerge && \
               sed -i 's|automerge = ".*"|automerge = { path = "/build/automerge-src/rust/automerge" }|' Cargo.toml
 
           # Build documentation
-          RUN cargo doc --no-deps --manifest-path redis-automerge/Cargo.toml
+          RUN cargo doc --no-deps --manifest-path valkey-automerge/Cargo.toml
           EOF
 
           # Build the docs image
-          docker build -f Dockerfile.docs -t redis-automerge-docs .
+          docker build -f Dockerfile.docs -t valkey-automerge-docs .
 
           # Create a container and extract the docs
-          docker create --name docs-container redis-automerge-docs
-          docker cp docs-container:/build/redis-automerge/target/doc ./doc
+          docker create --name docs-container valkey-automerge-docs
+          docker cp docs-container:/build/valkey-automerge/target/doc ./doc
           docker rm docs-container
 
           # Clean up
@@ -100,21 +100,21 @@ jobs:
           RUN git clone --depth 1 --branch js/automerge-3.1.2 https://github.com/automerge/automerge.git /build/automerge-src
 
           # Copy project files
-          COPY redis-automerge/ ./redis-automerge/
+          COPY valkey-automerge/ ./valkey-automerge/
 
           # Update Cargo.toml to use local automerge
-          RUN cd redis-automerge && \
+          RUN cd valkey-automerge && \
               sed -i 's|automerge = ".*"|automerge = { path = "/build/automerge-src/rust/automerge" }|' Cargo.toml
 
           # Build documentation and capture output
-          RUN cargo doc --no-deps --manifest-path redis-automerge/Cargo.toml 2>&1 | tee /build/doc-output.txt
+          RUN cargo doc --no-deps --manifest-path valkey-automerge/Cargo.toml 2>&1 | tee /build/doc-output.txt
           EOF
 
           # Build the docs image
-          docker build -f Dockerfile.docs -t redis-automerge-docs-check . 2>&1 | tee build-output.txt
+          docker build -f Dockerfile.docs -t valkey-automerge-docs-check . 2>&1 | tee build-output.txt
 
           # Create a container and extract the log
-          docker create --name docs-check-container redis-automerge-docs-check
+          docker create --name docs-check-container valkey-automerge-docs-check
           docker cp docs-check-container:/build/doc-output.txt ./doc-output.txt || echo "No doc output file found"
           docker rm docs-check-container
 

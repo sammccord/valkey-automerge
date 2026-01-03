@@ -1,7 +1,8 @@
 """
-pytest configuration and fixtures for Redis-Automerge tests.
+pytest configuration and fixtures for valkey-automerge tests.
 """
 import os
+
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
@@ -10,13 +11,13 @@ from redis.asyncio import Redis
 @pytest_asyncio.fixture
 async def redis_client():
     """
-    Async Redis client fixture with binary data handling.
+    Async Valkey client fixture with binary data handling.
 
     Yields a Redis client connected to the test instance.
     Automatically closes connection after test completion.
     """
-    host = os.getenv('REDIS_HOST', 'localhost')
-    port = int(os.getenv('REDIS_PORT', 6379))
+    host = os.getenv('VALKEY_HOST', 'localhost')
+    port = int(os.getenv('VALKEY_PORT', 6379))
 
     # Create client with decode_responses=False for binary data
     client = Redis(

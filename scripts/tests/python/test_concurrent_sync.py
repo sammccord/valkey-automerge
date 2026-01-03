@@ -1,5 +1,5 @@
 """
-Advanced concurrent synchronization tests for Redis-Automerge.
+Advanced concurrent synchronization tests for valkey-automerge.
 
 Tests complex scenarios with multiple documents syncing concurrently.
 """

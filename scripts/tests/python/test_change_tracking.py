@@ -1,5 +1,5 @@
 """
-Change tracking and persistence tests for Redis-Automerge.
+Change tracking and persistence tests for valkey-automerge.
 
 Tests that changes are properly tracked and preserved through save/load cycles.
 """

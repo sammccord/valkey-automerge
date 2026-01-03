@@ -1,13 +1,13 @@
-//! Redis module for Automerge CRDT documents.
+//! Valkey module for Automerge CRDT documents.
 //!
 //! This module integrates [Automerge](https://automerge.org/) conflict-free replicated data types (CRDTs)
-//! into Redis, providing:
+//! into Valkey, providing:
 //! - JSON-like document storage with automatic conflict resolution
 //! - Path-based access similar to RedisJSON
 //! - Support for nested maps and arrays
 //! - Persistent storage via RDB and AOF
 //!
-//! # Redis Commands
+//! # Valkey Commands
 //!
 //! ## Document Management
 //! - `AM.NEW <key>` - Create a new empty Automerge document
@@ -43,7 +43,7 @@
 //!
 //! # Path Syntax
 //!
-//! Paths support RedisJSON-compatible syntax:
+//! Paths support JSON-compatible syntax:
 //! - Simple keys: `name`, `config`
 //! - Nested maps: `user.profile.name`, `data.settings.port`
 //! - Array indices: `users[0]`, `items[5].name`
@@ -84,21 +84,21 @@ use automerge::{Change, ChangeHash};
 use ext::{RedisAutomergeClient, RedisAutomergeExt};
 use index::IndexConfig;
 #[cfg(not(test))]
-use redis_module::redis_module;
-use redis_module::{
-    native_types::RedisType,
+use valkey_module::valkey_module;
+use valkey_module::{
+    native_types::ValkeyType,
     raw::{self, Status},
-    Context, NextArg, RedisError, RedisResult, RedisString, RedisValue,
+    Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
 };
 
-static REDIS_AUTOMERGE_TYPE: RedisType = RedisType::new(
+static VALKEY_AUTOMERGE_TYPE: ValkeyType = ValkeyType::new(
     "amdoc-rs1",
     0,
     raw::RedisModuleTypeMethods {
         version: raw::REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(am_rdb_load),
         rdb_save: Some(am_rdb_save),
-        aof_rewrite: Some(am_aof_rewrite),  // Emit AM.LOAD commands for AOF rewrite
+        aof_rewrite: Some(am_aof_rewrite), // Emit AM.LOAD commands for AOF rewrite
         free: Some(am_free),
         mem_usage: None,
         digest: None,
@@ -117,23 +117,23 @@ static REDIS_AUTOMERGE_TYPE: RedisType = RedisType::new(
     },
 );
 
-fn init(ctx: &Context, _args: &Vec<RedisString>) -> Status {
-    REDIS_AUTOMERGE_TYPE
+fn init(ctx: &Context, _args: &Vec<ValkeyString>) -> Status {
+    VALKEY_AUTOMERGE_TYPE
         .create_data_type(ctx.ctx)
         .map(|_| Status::Ok)
         .unwrap_or(Status::Err)
 }
 
-/// Helper function to parse a RedisString as UTF-8 with a custom error message.
-fn parse_utf8_field<'a>(s: &'a RedisString, field_name: &str) -> Result<&'a str, RedisError> {
+/// Helper function to parse a ValkeyString as UTF-8 with a custom error message.
+fn parse_utf8_field<'a>(s: &'a ValkeyString, field_name: &str) -> Result<&'a str, ValkeyError> {
     s.try_as_str()
-        .map_err(|_| RedisError::String(format!("{} must be utf-8", field_name)))
+        .map_err(|_| ValkeyError::String(format!("{} must be utf-8", field_name)))
 }
 
-/// Helper function to parse a RedisString as UTF-8 (generic "value" error).
-fn parse_utf8_value(s: &RedisString) -> Result<&str, RedisError> {
+/// Helper function to parse a ValkeyString as UTF-8 (generic "value" error).
+fn parse_utf8_value(s: &ValkeyString) -> Result<&str, ValkeyError> {
     s.try_as_str()
-        .map_err(|_| RedisError::Str("value must be utf-8"))
+        .map_err(|_| ValkeyError::Str("value must be utf-8"))
 }
 
 /// Helper function to publish Automerge change bytes to the changes:{key} Redis pub/sub channel.
@@ -144,80 +144,80 @@ fn parse_utf8_value(s: &RedisString) -> Result<&str, RedisError> {
 /// # Arguments
 ///
 /// * `ctx` - Redis module context for making Redis calls
-/// * `key_name` - The RedisString key name (used to construct the channel name)
+/// * `key_name` - The ValkeyString key name (used to construct the channel name)
 /// * `change_bytes` - Optional change bytes to publish (None = no-op)
 ///
 /// # Errors
 ///
-/// Returns a RedisError if:
+/// Returns a ValkeyError if:
 /// - The key name cannot be converted to UTF-8
 /// - The PUBLISH command fails
 fn publish_change(
     ctx: &Context,
-    key_name: &RedisString,
+    key_name: &ValkeyString,
     change_bytes: Option<Vec<u8>>,
-) -> RedisResult {
+) -> ValkeyResult {
     if let Some(change) = change_bytes {
         let channel_name = format!("changes:{}", key_name.try_as_str()?);
         // Base64 encode binary change data to avoid null byte issues
         use base64::{engine::general_purpose, Engine as _};
         let encoded_change = general_purpose::STANDARD.encode(&change);
         let ctx_ptr = std::ptr::NonNull::new(ctx.ctx);
-        let channel_str = redis_module::RedisString::create(ctx_ptr, channel_name.as_bytes());
-        let change_str = redis_module::RedisString::create(ctx_ptr, encoded_change.as_bytes());
+        let channel_str = valkey_module::ValkeyString::create(ctx_ptr, channel_name.as_bytes());
+        let change_str = valkey_module::ValkeyString::create(ctx_ptr, encoded_change.as_bytes());
         ctx.call("PUBLISH", &[&channel_str, &change_str])?;
     }
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_load(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_load(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let mut args = args.into_iter().skip(1);
     let key_name = args.next_arg()?;
     let data = args.next_arg()?;
     let client = RedisAutomergeClient::load(data.as_slice())
-        .map_err(|e| RedisError::String(e.to_string()))?;
+        .map_err(|e| ValkeyError::String(e.to_string()))?;
 
     // Set value and close key before calling replicate
     {
         let key = ctx.open_key_writable(&key_name);
-        key.set_value(&REDIS_AUTOMERGE_TYPE, client)?;
+        key.set_value(&VALKEY_AUTOMERGE_TYPE, client)?;
     } // key is dropped here
 
     ctx.replicate("am.load", &[&key_name, &data]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.load", &key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.load", &key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_new(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_new(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
 
     // Create document and close key before calling replicate
     {
         let key = ctx.open_key_writable(key_name);
-        key.set_value(&REDIS_AUTOMERGE_TYPE, RedisAutomergeClient::new())?;
+        key.set_value(&VALKEY_AUTOMERGE_TYPE, RedisAutomergeClient::new())?;
     } // key is dropped here
 
     ctx.replicate("am.new", &[key_name]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.new", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.new", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_save(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_save(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let mut args = args.into_iter().skip(1);
     let key_name = args.next_arg()?;
     let key = ctx.open_key(&key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
-    Ok(RedisValue::StringBuffer(client.save()))
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
+    Ok(ValkeyValue::StringBuffer(client.save()))
 }
 
-fn am_puttext(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_puttext(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
@@ -227,53 +227,53 @@ fn am_puttext(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_text_with_change(field, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.puttext", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.puttext", key_name);
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.puttext", key_name);
 
     // Update search index
     {
         let key = ctx.open_key(key_name);
-        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE) {
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
             try_update_search_index(ctx, &key_name.to_string(), client);
         }
     }
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_gettext(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_gettext(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .get_text(field)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(text) => Ok(RedisValue::BulkString(text)),
-        None => Ok(RedisValue::Null),
+        Some(text) => Ok(ValkeyValue::BulkString(text)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_putdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_putdiff(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
@@ -283,64 +283,68 @@ fn am_putdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_diff_with_change(field, diff)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putdiff", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.putdiff", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putdiff", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_splicetext(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_splicetext(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 6 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let pos: usize = args[3]
         .parse_integer()
-        .map_err(|_| RedisError::Str("pos must be a non-negative integer"))?
+        .map_err(|_| ValkeyError::Str("pos must be a non-negative integer"))?
         .try_into()
-        .map_err(|_| RedisError::Str("pos must be a non-negative integer"))?;
+        .map_err(|_| ValkeyError::Str("pos must be a non-negative integer"))?;
     let del: isize = args[4]
         .parse_integer()
-        .map_err(|_| RedisError::Str("del must be an integer"))?
+        .map_err(|_| ValkeyError::Str("del must be an integer"))?
         .try_into()
-        .map_err(|_| RedisError::Str("del out of range"))?;
+        .map_err(|_| ValkeyError::Str("del out of range"))?;
     let text = parse_utf8_value(&args[5])?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .splice_text_with_change(field, pos, del, text)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.splicetext", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.splicetext", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.splicetext",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_markcreate(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_markcreate(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // AM.MARKCREATE <key> <path> <name> <value> <start> <end> [expand]
     if args.len() < 7 || args.len() > 8 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
@@ -348,14 +352,14 @@ fn am_markcreate(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let value_str = parse_utf8_value(&args[4])?;
     let start: usize = args[5]
         .parse_integer()
-        .map_err(|_| RedisError::Str("start must be a non-negative integer"))?
+        .map_err(|_| ValkeyError::Str("start must be a non-negative integer"))?
         .try_into()
-        .map_err(|_| RedisError::Str("start must be a non-negative integer"))?;
+        .map_err(|_| ValkeyError::Str("start must be a non-negative integer"))?;
     let end: usize = args[6]
         .parse_integer()
-        .map_err(|_| RedisError::Str("end must be a non-negative integer"))?
+        .map_err(|_| ValkeyError::Str("end must be a non-negative integer"))?
         .try_into()
-        .map_err(|_| RedisError::Str("end must be a non-negative integer"))?;
+        .map_err(|_| ValkeyError::Str("end must be a non-negative integer"))?;
 
     // Parse expand parameter (default to None)
     let expand = if args.len() == 8 {
@@ -365,7 +369,11 @@ fn am_markcreate(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
             "after" => automerge::marks::ExpandMark::After,
             "both" => automerge::marks::ExpandMark::Both,
             "none" => automerge::marks::ExpandMark::None,
-            _ => return Err(RedisError::Str("expand must be 'before', 'after', 'both', or 'none'")),
+            _ => {
+                return Err(ValkeyError::Str(
+                    "expand must be 'before', 'after', 'both', or 'none'",
+                ))
+            }
         }
     } else {
         automerge::marks::ExpandMark::None
@@ -389,39 +397,43 @@ fn am_markcreate(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .create_mark_with_change(path, mark_name, value, start, end, expand)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     };
 
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.markcreate", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.markcreate", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.markcreate",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_markclear(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_markclear(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // AM.MARKCLEAR <key> <path> <name> <start> <end> [expand]
     if args.len() < 6 || args.len() > 7 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
     let mark_name = parse_utf8_field(&args[3], "name")?;
     let start: usize = args[4]
         .parse_integer()
-        .map_err(|_| RedisError::Str("start must be a non-negative integer"))?
+        .map_err(|_| ValkeyError::Str("start must be a non-negative integer"))?
         .try_into()
-        .map_err(|_| RedisError::Str("start must be a non-negative integer"))?;
+        .map_err(|_| ValkeyError::Str("start must be a non-negative integer"))?;
     let end: usize = args[5]
         .parse_integer()
-        .map_err(|_| RedisError::Str("end must be a non-negative integer"))?
+        .map_err(|_| ValkeyError::Str("end must be a non-negative integer"))?
         .try_into()
-        .map_err(|_| RedisError::Str("end must be a non-negative integer"))?;
+        .map_err(|_| ValkeyError::Str("end must be a non-negative integer"))?;
 
     // Parse expand parameter (default to None)
     let expand = if args.len() == 7 {
@@ -431,7 +443,11 @@ fn am_markclear(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
             "after" => automerge::marks::ExpandMark::After,
             "both" => automerge::marks::ExpandMark::Both,
             "none" => automerge::marks::ExpandMark::None,
-            _ => return Err(RedisError::Str("expand must be 'before', 'after', 'both', or 'none'")),
+            _ => {
+                return Err(ValkeyError::Str(
+                    "expand must be 'before', 'after', 'both', or 'none'",
+                ))
+            }
         }
     } else {
         automerge::marks::ExpandMark::None
@@ -441,43 +457,43 @@ fn am_markclear(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .clear_mark_with_change(path, mark_name, start, end, expand)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     };
 
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.markclear", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.markclear", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.markclear", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_marks(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_marks(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // AM.MARKS <key> <path>
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
 
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
 
     let marks = client
         .get_marks(path)
-        .map_err(|e| RedisError::String(e.to_string()))?;
+        .map_err(|e| ValkeyError::String(e.to_string()))?;
 
     // Return as array of arrays: [[name, value, start, end], ...]
     let mut result = Vec::new();
     for (name, value, start, end) in marks {
         let mut mark_array = Vec::new();
-        mark_array.push(RedisValue::BulkString(name));
+        mark_array.push(ValkeyValue::BulkString(name));
 
         // Convert value to Redis value
         use automerge::ScalarValue;
@@ -491,117 +507,117 @@ fn am_marks(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
             ScalarValue::Null => "null".to_string(),
             _ => "unknown".to_string(),
         };
-        mark_array.push(RedisValue::BulkString(value_str));
-        mark_array.push(RedisValue::Integer(start as i64));
-        mark_array.push(RedisValue::Integer(end as i64));
+        mark_array.push(ValkeyValue::BulkString(value_str));
+        mark_array.push(ValkeyValue::Integer(start as i64));
+        mark_array.push(ValkeyValue::Integer(end as i64));
 
-        result.push(RedisValue::Array(mark_array));
+        result.push(ValkeyValue::Array(mark_array));
     }
 
-    Ok(RedisValue::Array(result))
+    Ok(ValkeyValue::Array(result))
 }
 
-fn am_putint(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_putint(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let value: i64 = args[3]
         .parse_integer()
-        .map_err(|_| RedisError::Str("value must be an integer"))?;
+        .map_err(|_| ValkeyError::Str("value must be an integer"))?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_int_with_change(field, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putint", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.putint", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putint", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_getint(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_getint(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .get_int(field)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(value) => Ok(RedisValue::Integer(value)),
-        None => Ok(RedisValue::Null),
+        Some(value) => Ok(ValkeyValue::Integer(value)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_putdouble(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_putdouble(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let value: f64 = parse_utf8_value(&args[3])?
         .parse()
-        .map_err(|_| RedisError::Str("value must be a valid double"))?;
+        .map_err(|_| ValkeyError::Str("value must be a valid double"))?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_double_with_change(field, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putdouble", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.putdouble", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putdouble", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_getdouble(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_getdouble(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .get_double(field)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(value) => Ok(RedisValue::Float(value)),
-        None => Ok(RedisValue::Null),
+        Some(value) => Ok(ValkeyValue::Float(value)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_putbool(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_putbool(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
@@ -609,179 +625,191 @@ fn am_putbool(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let value = match value_str.to_lowercase().as_str() {
         "true" | "1" => true,
         "false" | "0" => false,
-        _ => return Err(RedisError::Str("value must be true/false or 1/0")),
+        _ => return Err(ValkeyError::Str("value must be true/false or 1/0")),
     };
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_bool_with_change(field, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putbool", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.putbool", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putbool", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_getbool(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_getbool(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .get_bool(field)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(value) => Ok(RedisValue::Integer(if value { 1 } else { 0 })),
-        None => Ok(RedisValue::Null),
+        Some(value) => Ok(ValkeyValue::Integer(if value { 1 } else { 0 })),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_putcounter(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_putcounter(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let value: i64 = args[3]
         .parse_integer()
-        .map_err(|_| RedisError::Str("value must be an integer"))?;
+        .map_err(|_| ValkeyError::Str("value must be an integer"))?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_counter_with_change(field, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putcounter", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.putcounter", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.putcounter",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_getcounter(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_getcounter(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .get_counter(field)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(value) => Ok(RedisValue::Integer(value)),
-        None => Ok(RedisValue::Null),
+        Some(value) => Ok(ValkeyValue::Integer(value)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_inccounter(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_inccounter(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let delta: i64 = args[3]
         .parse_integer()
-        .map_err(|_| RedisError::Str("delta must be an integer"))?;
+        .map_err(|_| ValkeyError::Str("delta must be an integer"))?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .inc_counter_with_change(field, delta)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.inccounter", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.inccounter", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.inccounter",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_puttimestamp(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_puttimestamp(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
-    let value: i64 = args[3]
-        .parse_integer()
-        .map_err(|_| RedisError::Str("value must be an integer (Unix timestamp in milliseconds)"))?;
+    let value: i64 = args[3].parse_integer().map_err(|_| {
+        ValkeyError::Str("value must be an integer (Unix timestamp in milliseconds)")
+    })?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .put_timestamp_with_change(field, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.puttimestamp", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.puttimestamp", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.puttimestamp",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_gettimestamp(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_gettimestamp(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let field = parse_utf8_field(&args[2], "field")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .get_timestamp(field)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(value) => Ok(RedisValue::Integer(value)),
-        None => Ok(RedisValue::Null),
+        Some(value) => Ok(ValkeyValue::Integer(value)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_createlist(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_createlist(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
@@ -790,25 +818,29 @@ fn am_createlist(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .create_list_with_change(path)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.createlist", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.createlist", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.createlist",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_appendtext(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_appendtext(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
@@ -818,89 +850,93 @@ fn am_appendtext(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .append_text_with_change(path, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.appendtext", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.appendtext", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.appendtext",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_appendint(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_appendint(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
     let value: i64 = args[3]
         .parse_integer()
-        .map_err(|_| RedisError::Str("value must be an integer"))?;
+        .map_err(|_| ValkeyError::Str("value must be an integer"))?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .append_int_with_change(path, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.appendint", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.appendint", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.appendint", key_name);
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_appenddouble(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_appenddouble(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
     let value: f64 = parse_utf8_value(&args[3])?
         .parse()
-        .map_err(|_| RedisError::Str("value must be a valid double"))?;
+        .map_err(|_| ValkeyError::Str("value must be a valid double"))?;
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .append_double_with_change(path, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.appenddouble", &refs[..]);
     ctx.notify_keyspace_event(
-        redis_module::NotifyEvent::MODULE,
+        valkey_module::NotifyEvent::MODULE,
         "am.appenddouble",
         key_name,
     );
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_appendbool(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_appendbool(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
@@ -908,70 +944,74 @@ fn am_appendbool(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let value = match value_str.to_lowercase().as_str() {
         "true" | "1" => true,
         "false" | "0" => false,
-        _ => return Err(RedisError::Str("value must be true/false or 1/0")),
+        _ => return Err(ValkeyError::Str("value must be true/false or 1/0")),
     };
 
     // Capture change bytes before calling ctx.call
     let change_bytes = {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         client
             .append_bool_with_change(path, value)
-            .map_err(|e| RedisError::String(e.to_string()))?
+            .map_err(|e| ValkeyError::String(e.to_string()))?
     }; // key is dropped here
 
     // Publish change to subscribers if one was generated
     publish_change(ctx, key_name, change_bytes)?;
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.appendbool", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.appendbool", key_name);
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    ctx.notify_keyspace_event(
+        valkey_module::NotifyEvent::MODULE,
+        "am.appendbool",
+        key_name,
+    );
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_listlen(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_listlen(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .list_len(path)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(len) => Ok(RedisValue::Integer(len as i64)),
-        None => Ok(RedisValue::Null),
+        Some(len) => Ok(ValkeyValue::Integer(len as i64)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_maplen(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_maplen(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let path = parse_utf8_field(&args[2], "path")?;
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
     match client
         .map_len(path)
-        .map_err(|e| RedisError::String(e.to_string()))?
+        .map_err(|e| ValkeyError::String(e.to_string()))?
     {
-        Some(len) => Ok(RedisValue::Integer(len as i64)),
-        None => Ok(RedisValue::Null),
+        Some(len) => Ok(ValkeyValue::Integer(len as i64)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
-fn am_apply(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_apply(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() < 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
 
@@ -979,18 +1019,18 @@ fn am_apply(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     {
         let key = ctx.open_key_writable(key_name);
         let client = key
-            .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-            .ok_or(RedisError::Str("no such key"))?;
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
         let mut changes = Vec::new();
         for change_str in &args[2..] {
             let bytes = change_str.to_vec();
             let change = Change::from_bytes(bytes)
-                .map_err(|e| RedisError::String(format!("invalid change: {}", e)))?;
+                .map_err(|e| ValkeyError::String(format!("invalid change: {}", e)))?;
             changes.push(change);
         }
         client
             .apply(changes)
-            .map_err(|e| RedisError::String(e.to_string()))?;
+            .map_err(|e| ValkeyError::String(e.to_string()))?;
     } // key is dropped here
 
     // Publish each change to subscribers
@@ -999,37 +1039,37 @@ fn am_apply(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         publish_change(ctx, key_name, Some(change_bytes))?;
     }
 
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.apply", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.apply", key_name);
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.apply", key_name);
 
     // Update search index
     {
         let key = ctx.open_key(key_name);
-        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE) {
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
             try_update_search_index(ctx, &key_name.to_string(), client);
         }
     }
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_changes(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_changes(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() < 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let key = ctx.open_key_writable(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
 
     // Parse have_deps from remaining arguments
     let mut have_deps = Vec::new();
     for hash_arg in &args[2..] {
         let bytes = hash_arg.as_slice();
         let hash = ChangeHash::try_from(bytes)
-            .map_err(|e| RedisError::String(format!("invalid change hash: {:?}", e)))?;
+            .map_err(|e| ValkeyError::String(format!("invalid change hash: {:?}", e)))?;
         have_deps.push(hash);
     }
 
@@ -1039,28 +1079,28 @@ fn am_changes(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     // Build array response
     let mut result = Vec::new();
     for change in changes {
-        result.push(RedisValue::StringBuffer(change.raw_bytes().to_vec()));
+        result.push(ValkeyValue::StringBuffer(change.raw_bytes().to_vec()));
     }
 
-    Ok(RedisValue::Array(result))
+    Ok(ValkeyValue::Array(result))
 }
 
-fn am_numchanges(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_numchanges(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() < 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let key = ctx.open_key_writable(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
 
     // Parse have_deps from remaining arguments
     let mut have_deps = Vec::new();
     for hash_arg in &args[2..] {
         let bytes = hash_arg.as_slice();
         let hash = ChangeHash::try_from(bytes)
-            .map_err(|e| RedisError::String(format!("invalid change hash: {:?}", e)))?;
+            .map_err(|e| ValkeyError::String(format!("invalid change hash: {:?}", e)))?;
         have_deps.push(hash);
     }
 
@@ -1068,21 +1108,21 @@ fn am_numchanges(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let changes = client.get_changes(&have_deps);
     let count = changes.len();
 
-    Ok(RedisValue::Integer(count as i64))
+    Ok(ValkeyValue::Integer(count as i64))
 }
 
-fn am_getdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_getdiff(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // AM.GETDIFF <key> BEFORE <hash>... AFTER <hash>...
     // Minimum: AM.GETDIFF key BEFORE AFTER (both empty = compare initial to current)
     if args.len() < 4 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let key_name = &args[1];
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
 
     // Find BEFORE and AFTER keywords
     let mut before_idx = None;
@@ -1097,11 +1137,11 @@ fn am_getdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         }
     }
 
-    let before_idx = before_idx.ok_or(RedisError::Str("missing BEFORE keyword"))?;
-    let after_idx = after_idx.ok_or(RedisError::Str("missing AFTER keyword"))?;
+    let before_idx = before_idx.ok_or(ValkeyError::Str("missing BEFORE keyword"))?;
+    let after_idx = after_idx.ok_or(ValkeyError::Str("missing AFTER keyword"))?;
 
     if before_idx >= after_idx {
-        return Err(RedisError::Str("BEFORE must come before AFTER"));
+        return Err(ValkeyError::Str("BEFORE must come before AFTER"));
     }
 
     // Parse before heads (between BEFORE and AFTER)
@@ -1109,7 +1149,7 @@ fn am_getdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     for hash_arg in &args[(before_idx + 1)..after_idx] {
         let bytes = hash_arg.as_slice();
         let hash = ChangeHash::try_from(bytes)
-            .map_err(|e| RedisError::String(format!("invalid before hash: {:?}", e)))?;
+            .map_err(|e| ValkeyError::String(format!("invalid before hash: {:?}", e)))?;
         before_heads.push(hash);
     }
 
@@ -1118,7 +1158,7 @@ fn am_getdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     for hash_arg in &args[(after_idx + 1)..] {
         let bytes = hash_arg.as_slice();
         let hash = ChangeHash::try_from(bytes)
-            .map_err(|e| RedisError::String(format!("invalid after hash: {:?}", e)))?;
+            .map_err(|e| ValkeyError::String(format!("invalid after hash: {:?}", e)))?;
         after_heads.push(hash);
     }
 
@@ -1130,13 +1170,13 @@ fn am_getdiff(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     // wrapped in a JSON array structure
     let json = format!("{:?}", patches);
 
-    Ok(RedisValue::BulkString(json))
+    Ok(ValkeyValue::BulkString(json))
 }
 
-fn am_tojson(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_tojson(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // AM.TOJSON <key> [pretty]
     if args.len() < 2 || args.len() > 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
 
@@ -1146,7 +1186,11 @@ fn am_tojson(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         match pretty_str.to_lowercase().as_str() {
             "true" | "1" | "yes" => true,
             "false" | "0" | "no" => false,
-            _ => return Err(RedisError::Str("pretty must be true/false, 1/0, or yes/no")),
+            _ => {
+                return Err(ValkeyError::Str(
+                    "pretty must be true/false, 1/0, or yes/no",
+                ))
+            }
         }
     } else {
         false // Default to compact JSON
@@ -1154,46 +1198,46 @@ fn am_tojson(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
 
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
 
     let json = client
         .to_json(pretty)
-        .map_err(|e| RedisError::String(e.to_string()))?;
+        .map_err(|e| ValkeyError::String(e.to_string()))?;
 
-    Ok(RedisValue::BulkString(json))
+    Ok(ValkeyValue::BulkString(json))
 }
 
-fn am_fromjson(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_fromjson(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // AM.FROMJSON <key> <json>
     if args.len() != 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let key_name = &args[1];
     let json = parse_utf8_value(&args[2])?;
 
     // Create new document from JSON
-    let client = RedisAutomergeClient::from_json(json)
-        .map_err(|e| RedisError::String(e.to_string()))?;
+    let client =
+        RedisAutomergeClient::from_json(json).map_err(|e| ValkeyError::String(e.to_string()))?;
 
     // Store the document at the key
     let key = ctx.open_key_writable(key_name);
-    key.set_value(&REDIS_AUTOMERGE_TYPE, client)?;
+    key.set_value(&VALKEY_AUTOMERGE_TYPE, client)?;
 
     // Replicate and notify
-    let refs: Vec<&RedisString> = args[1..].iter().collect();
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.fromjson", &refs[..]);
-    ctx.notify_keyspace_event(redis_module::NotifyEvent::MODULE, "am.fromjson", key_name);
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.fromjson", key_name);
 
     // Update search index
     {
         let key = ctx.open_key(key_name);
-        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE) {
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
             try_update_search_index(ctx, &key_name.to_string(), client);
         }
     }
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
 /// # Safety
@@ -1261,13 +1305,16 @@ unsafe extern "C" fn am_aof_rewrite(
 fn try_update_search_index(ctx: &Context, key_name: &str, client: &RedisAutomergeClient) {
     if let Err(e) = index::update_search_index(ctx, key_name, client) {
         // Log error but don't fail the write operation
-        ctx.log_warning(&format!("Failed to update search index for {}: {}", key_name, e));
+        ctx.log_warning(&format!(
+            "Failed to update search index for {}: {}",
+            key_name, e
+        ));
     }
 }
 
-fn am_index_configure(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_index_configure(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() < 3 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let pattern = args[1].to_string();
@@ -1281,47 +1328,54 @@ fn am_index_configure(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         format = match format_str.to_lowercase().as_str() {
             "hash" => index::IndexFormat::Hash,
             "json" => index::IndexFormat::Json,
-            _ => return Err(RedisError::String(format!(
-                "Invalid format '{}'. Must be 'hash' or 'json'", format_str
-            ))),
+            _ => {
+                return Err(ValkeyError::String(format!(
+                    "Invalid format '{}'. Must be 'hash' or 'json'",
+                    format_str
+                )))
+            }
         };
         path_start_idx = 4;
     }
 
     // Remaining args are paths
     if args.len() <= path_start_idx {
-        return Err(RedisError::String("At least one path is required".to_string()));
+        return Err(ValkeyError::String(
+            "At least one path is required".to_string(),
+        ));
     }
 
-    let paths: Vec<String> = args[path_start_idx..].iter().map(|s| s.to_string()).collect();
+    let paths: Vec<String> = args[path_start_idx..]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     let config = index::IndexConfig::new_with_format(pattern, paths, format);
     config.save(ctx)?;
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_index_enable(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_index_enable(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let pattern = args[1].to_string();
 
     // Load existing config or create new one
-    let mut config = IndexConfig::load(ctx, &pattern)?.unwrap_or_else(|| {
-        IndexConfig::new(pattern.clone(), Vec::new())
-    });
+    let mut config = IndexConfig::load(ctx, &pattern)?
+        .unwrap_or_else(|| IndexConfig::new(pattern.clone(), Vec::new()));
 
     config.enabled = true;
     config.save(ctx)?;
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_index_disable(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_index_disable(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let pattern = args[1].to_string();
@@ -1332,30 +1386,30 @@ fn am_index_disable(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         config.save(ctx)?;
     }
 
-    Ok(RedisValue::SimpleStringStatic("OK"))
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
-fn am_index_reindex(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_index_reindex(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     if args.len() != 2 {
-        return Err(RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
 
     let key_name = &args[1];
 
     let key = ctx.open_key(key_name);
     let client = key
-        .get_value::<RedisAutomergeClient>(&REDIS_AUTOMERGE_TYPE)?
-        .ok_or(RedisError::Str("no such key"))?;
+        .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+        .ok_or(ValkeyError::Str("no such key"))?;
 
     // Update the search index
     let updated = index::update_search_index(ctx, &key_name.to_string(), client)
-        .map_err(|e| RedisError::String(e.to_string()))?;
+        .map_err(|e| ValkeyError::String(e.to_string()))?;
 
     // Return 1 if index was updated, 0 if not (e.g., no matching config or no fields)
-    Ok(RedisValue::Integer(if updated { 1 } else { 0 }))
+    Ok(ValkeyValue::Integer(if updated { 1 } else { 0 }))
 }
 
-fn am_index_status(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn am_index_status(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     // Get pattern from args, or default to "*"
     let pattern = if args.len() > 1 {
         args[1].to_string()
@@ -1367,12 +1421,12 @@ fn am_index_status(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let search_pattern = format!("am:index:config:{}", pattern);
     let keys_result = ctx.call("KEYS", &[&ctx.create_string(search_pattern)])?;
 
-    let config_keys: Vec<RedisString> = match keys_result {
-        RedisValue::Array(keys) => keys
+    let config_keys: Vec<ValkeyString> = match keys_result {
+        ValkeyValue::Array(keys) => keys
             .into_iter()
             .filter_map(|v| match v {
-                RedisValue::BulkString(s) => Some(ctx.create_string(s)),
-                RedisValue::SimpleString(s) => Some(ctx.create_string(s)),
+                ValkeyValue::BulkString(s) => Some(ctx.create_string(s)),
+                ValkeyValue::SimpleString(s) => Some(ctx.create_string(s)),
                 _ => None,
             })
             .collect(),
@@ -1385,38 +1439,38 @@ fn am_index_status(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         let config_key_str = config_key.to_string();
         if let Some(key_pattern) = config_key_str.strip_prefix("am:index:config:") {
             if let Ok(Some(config)) = IndexConfig::load(ctx, key_pattern) {
-                result.push(RedisValue::BulkString(format!(
+                result.push(ValkeyValue::BulkString(format!(
                     "pattern: {}",
                     config.pattern
                 )));
-                result.push(RedisValue::BulkString(format!(
+                result.push(ValkeyValue::BulkString(format!(
                     "enabled: {}",
                     config.enabled
                 )));
-                result.push(RedisValue::BulkString(format!(
+                result.push(ValkeyValue::BulkString(format!(
                     "paths: {}",
                     config.paths.join(", ")
                 )));
-                result.push(RedisValue::SimpleStringStatic("---"));
+                result.push(ValkeyValue::SimpleStringStatic("---"));
             }
         }
     }
 
     if result.is_empty() {
-        Ok(RedisValue::SimpleString(
+        Ok(ValkeyValue::SimpleString(
             "No index configurations found".to_string(),
         ))
     } else {
-        Ok(RedisValue::Array(result))
+        Ok(ValkeyValue::Array(result))
     }
 }
 
 #[cfg(not(test))]
-redis_module! {
+valkey_module! {
     name: "automerge",
     version: 1,
-    allocator: (redis_module::alloc::RedisAlloc, redis_module::alloc::RedisAlloc),
-    data_types: [REDIS_AUTOMERGE_TYPE],
+    allocator: (valkey_module::alloc::ValkeyAlloc, valkey_module::alloc::ValkeyAlloc),
+    data_types: [VALKEY_AUTOMERGE_TYPE],
     init: init,
     commands: [
         ["am.new", am_new, "write deny-oom", 1, 1, 1],
@@ -1596,9 +1650,18 @@ mod tests {
         let mut client1 = RedisAutomergeClient::new();
 
         // Create counter with change tracking
-        let change1 = client1.put_counter_with_change("views", 0).unwrap().unwrap();
-        let change2 = client1.inc_counter_with_change("views", 5).unwrap().unwrap();
-        let change3 = client1.inc_counter_with_change("views", 3).unwrap().unwrap();
+        let change1 = client1
+            .put_counter_with_change("views", 0)
+            .unwrap()
+            .unwrap();
+        let change2 = client1
+            .inc_counter_with_change("views", 5)
+            .unwrap()
+            .unwrap();
+        let change3 = client1
+            .inc_counter_with_change("views", 3)
+            .unwrap()
+            .unwrap();
 
         // Apply changes to client2
         let mut client2 = RedisAutomergeClient::new();
@@ -2317,7 +2380,9 @@ mod tests {
         client.create_list("user.hobbies").unwrap();
         client.append_text("user.hobbies", "reading").unwrap();
         client.append_text("user.hobbies", "coding").unwrap();
-        client.put_text("config.database.host", "localhost").unwrap();
+        client
+            .put_text("config.database.host", "localhost")
+            .unwrap();
         client.put_int("config.database.port", 5432).unwrap();
 
         let json = client.to_json(false).unwrap();
@@ -2506,7 +2571,10 @@ mod tests {
         // Unix timestamp for 2024-01-01T00:00:00Z in milliseconds
         let timestamp_ms = 1704067200000i64;
         client.put_timestamp("created_at", timestamp_ms).unwrap();
-        assert_eq!(client.get_timestamp("created_at").unwrap(), Some(timestamp_ms));
+        assert_eq!(
+            client.get_timestamp("created_at").unwrap(),
+            Some(timestamp_ms)
+        );
 
         // Test with current time (approximate)
         let now_ms = 1735689600000i64; // 2025-01-01T00:00:00Z
@@ -2516,7 +2584,10 @@ mod tests {
         // Verify persistence
         let bytes = client.save();
         let loaded = RedisAutomergeClient::load(&bytes).unwrap();
-        assert_eq!(loaded.get_timestamp("created_at").unwrap(), Some(timestamp_ms));
+        assert_eq!(
+            loaded.get_timestamp("created_at").unwrap(),
+            Some(timestamp_ms)
+        );
         assert_eq!(loaded.get_timestamp("updated_at").unwrap(), Some(now_ms));
     }
 
@@ -2526,15 +2597,24 @@ mod tests {
 
         // Create timestamp with change tracking
         let timestamp_ms = 1704067200000i64;
-        let change1 = client1.put_timestamp_with_change("event_time", timestamp_ms).unwrap().unwrap();
+        let change1 = client1
+            .put_timestamp_with_change("event_time", timestamp_ms)
+            .unwrap()
+            .unwrap();
 
         // Apply change to client2
         let mut client2 = RedisAutomergeClient::new();
         client2.apply_change_bytes(&change1).unwrap();
 
         // Both clients should have same timestamp value
-        assert_eq!(client1.get_timestamp("event_time").unwrap(), Some(timestamp_ms));
-        assert_eq!(client2.get_timestamp("event_time").unwrap(), Some(timestamp_ms));
+        assert_eq!(
+            client1.get_timestamp("event_time").unwrap(),
+            Some(timestamp_ms)
+        );
+        assert_eq!(
+            client2.get_timestamp("event_time").unwrap(),
+            Some(timestamp_ms)
+        );
     }
 
     #[test]
@@ -2543,7 +2623,9 @@ mod tests {
 
         // Test nested timestamp field
         let timestamp_ms = 1704067200000i64;
-        client.put_timestamp("event.created_at", timestamp_ms).unwrap();
+        client
+            .put_timestamp("event.created_at", timestamp_ms)
+            .unwrap();
         assert_eq!(
             client.get_timestamp("event.created_at").unwrap(),
             Some(timestamp_ms)
@@ -2583,8 +2665,8 @@ mod tests {
         let mut client = RedisAutomergeClient::new();
 
         // Different timestamps
-        let created = 1704067200000i64;  // 2024-01-01T00:00:00Z
-        let updated = 1735689600000i64;  // 2025-01-01T00:00:00Z
+        let created = 1704067200000i64; // 2024-01-01T00:00:00Z
+        let updated = 1735689600000i64; // 2025-01-01T00:00:00Z
 
         client.put_timestamp("timestamps.created", created).unwrap();
         client.put_timestamp("timestamps.updated", updated).unwrap();
@@ -2617,7 +2699,10 @@ mod tests {
 
         assert_eq!(client.get_text("name").unwrap(), Some("Alice".to_string()));
         assert_eq!(client.get_int("age").unwrap(), Some(30));
-        assert_eq!(client.get_timestamp("joined_at").unwrap(), Some(timestamp_ms));
+        assert_eq!(
+            client.get_timestamp("joined_at").unwrap(),
+            Some(timestamp_ms)
+        );
         assert_eq!(client.get_bool("active").unwrap(), Some(true));
 
         // Verify persistence
@@ -2625,7 +2710,10 @@ mod tests {
         let loaded = RedisAutomergeClient::load(&bytes).unwrap();
         assert_eq!(loaded.get_text("name").unwrap(), Some("Alice".to_string()));
         assert_eq!(loaded.get_int("age").unwrap(), Some(30));
-        assert_eq!(loaded.get_timestamp("joined_at").unwrap(), Some(timestamp_ms));
+        assert_eq!(
+            loaded.get_timestamp("joined_at").unwrap(),
+            Some(timestamp_ms)
+        );
         assert_eq!(loaded.get_bool("active").unwrap(), Some(true));
     }
 }

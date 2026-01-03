@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   push:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
   test:
@@ -23,9 +23,9 @@ jobs:
       - name: Start services
         run: docker compose up -d redis webdis
 
-      - name: Wait for Redis to be ready
+      - name: Wait for Valkey to be ready
         run: |
-          timeout 30 bash -c 'until docker compose exec -T redis redis-cli ping; do sleep 1; done'
+          timeout 30 bash -c 'until docker compose exec -T redis valkey-cli ping; do sleep 1; done'
 
       - name: Run integration tests
         run: docker compose run --rm test
@@ -59,15 +59,15 @@ jobs:
       - name: Extract built module from Docker image
         run: |
           # Create a temporary container from the built image
-          docker create --name temp-container redis-automerge-redis
+          docker create --name temp-container valkey-automerge-redis
           # Copy the built module out
-          docker cp temp-container:/usr/lib/redis/modules/redis-automerge.so ./libredis_automerge.so
+          docker cp temp-container:/usr/lib/valkey/modules/valkey-automerge.so ./libvalkey_automerge.so
           # Clean up
           docker rm temp-container
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: redis-automerge-module
-          path: libredis_automerge.so
+          name: valkey-automerge-module
+          path: libvalkey_automerge.so
           retention-days: 7

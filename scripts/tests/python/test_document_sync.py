@@ -1,5 +1,5 @@
 """
-Document synchronization tests for Redis-Automerge.
+Document synchronization tests for valkey-automerge.
 
 Tests AM.APPLY functionality with proper binary change arrays.
 This is the key capability that bash tests couldn't properly exercise.

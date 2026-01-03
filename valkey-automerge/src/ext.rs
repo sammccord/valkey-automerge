@@ -1,15 +1,15 @@
-//! Extension trait and implementation for integrating Automerge CRDT with Redis.
+//! Extension trait and implementation for integrating Automerge CRDT with Valkey.
 //!
 //! This module provides the core functionality for managing Automerge documents
-//! within Redis, including:
+//! within Valkey, including:
 //! - JSON-like path operations with support for nested maps and arrays
 //! - Type-safe operations for text, integers, doubles, and booleans
 //! - List/array manipulation with append operations
-//! - Persistence and change tracking for Redis RDB and AOF
+//! - Persistence and change tracking for RDB and AOF
 //!
 //! # Path Syntax
 //!
-//! The module supports RedisJSON-compatible path syntax:
+//! The module supports JSON-compatible path syntax:
 //! - Simple keys: `"name"`, `"user"`
 //! - Nested maps: `"user.profile.name"`, `"data.config.port"`
 //! - Array indices: `"users[0]"`, `"items[5].name"`
@@ -18,7 +18,7 @@
 //! # Examples
 //!
 //! ```rust,no_run
-//! use redis_automerge::ext::RedisAutomergeClient;
+//! use valkey_automerge::ext::RedisAutomergeClient;
 //!
 //! let mut client = RedisAutomergeClient::new();
 //!

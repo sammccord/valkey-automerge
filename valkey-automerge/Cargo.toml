@@ -1,5 +1,5 @@
 [package]
-name = "redis-automerge"
+name = "valkey-automerge"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,8 +7,8 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-automerge = "1.0.0-beta.6"
-redis-module = "2"
+automerge = "1.0.0-beta.3"
+valkey-module = "0.1"
 base64 = "0.22"
 serde_json = "1.0"
 chrono = "0.4"

@@ -1,11 +1,11 @@
-# Redis-Automerge
+# valkey-automerge
 
-[![CI](https://github.com/michelp/redis-automerge/actions/workflows/ci.yml/badge.svg)](https://github.com/michelp/redis-automerge/actions/workflows/ci.yml)
-[![Documentation](https://github.com/michelp/redis-automerge/actions/workflows/docs.yml/badge.svg)](https://github.com/michelp/redis-automerge/actions/workflows/docs.yml)
-[![Docker Hub](https://img.shields.io/docker/v/metagration/redis-automerge?label=docker&logo=docker)](https://hub.docker.com/r/metagration/redis-automerge)
-[![Docker Pulls](https://img.shields.io/docker/pulls/metagration/redis-automerge)](https://hub.docker.com/r/metagration/redis-automerge)
+[![CI](https://github.com/sammccord/valkey-automerge/actions/workflows/ci.yml/badge.svg)](https://github.com/sammccord/valkey-automerge/actions/workflows/ci.yml)
+[![Documentation](https://github.com/sammccord/valkey-automerge/actions/workflows/docs.yml/badge.svg)](https://github.com/sammccord/valkey-automerge/actions/workflows/docs.yml)
+[![Docker Hub](https://img.shields.io/docker/v/sammccord/valkey-automerge?label=docker&logo=docker)](https://hub.docker.com/r/sammccord/valkey-automerge)
+[![Docker Pulls](https://img.shields.io/docker/pulls/sammccord/valkey-automerge)](https://hub.docker.com/r/sammccord/valkey-automerge)
 
-A Redis module that integrates [Automerge](https://automerge.org/) CRDT (Conflict-free Replicated Data Type) documents into Redis, providing JSON-like document storage with automatic conflict resolution.
+A Valkey module that integrates [Automerge](https://automerge.org/) CRDT (Conflict-free Replicated Data Type) documents into Valkey, providing JSON-like document storage with automatic conflict resolution.
 
 ## Table of Contents
 
@@ -104,29 +104,29 @@ A Redis module that integrates [Automerge](https://automerge.org/) CRDT (Conflic
 - **Real-time synchronization** - pub/sub change notifications for live updates
 - **Efficient text editing** - splice operations and unified diff support
 - **Change history** - retrieve document changes for synchronization
-- **Persistent storage** via Redis RDB and AOF
-- **Replication support** for Redis clusters
+- **Persistent storage** via RDB and AOF
+- **Replication support** for Valkey clusters
 
 ## Quick Start with Docker
 
 ### Pre-Built Images from Docker Hub
 
-The easiest way to get started is using pre-built images available on Docker Hub at **[metagration/redis-automerge](https://hub.docker.com/r/metagration/redis-automerge)**.
+The easiest way to get started is using pre-built images available on Docker Hub at **[sammccord/valkey-automerge](https://hub.docker.com/r/sammccord/valkey-automerge)**.
 
 #### Pull Latest Image
 
 ```bash
 # Pull the latest stable version
-docker pull metagration/redis-automerge:latest
+docker pull sammccord/valkey-automerge:latest
 
-# Run Redis with the module loaded
-docker run -d --name redis-automerge -p 6379:6379 metagration/redis-automerge:latest
+# Run Valkey with the module loaded
+docker run -d --name valkey-automerge -p 6379:6379 sammccord/valkey-automerge:latest
 
 # Test it works
-redis-cli PING
-redis-cli AM.NEW mydoc
-redis-cli AM.PUTTEXT mydoc greeting "Hello, Automerge!"
-redis-cli AM.GETTEXT mydoc greeting
+valkey-cli PING
+valkey-cli AM.NEW mydoc
+valkey-cli AM.PUTTEXT mydoc greeting "Hello, Automerge!"
+valkey-cli AM.GETTEXT mydoc greeting
 # Returns: "Hello, Automerge!"
 ```
 
@@ -134,10 +134,10 @@ redis-cli AM.GETTEXT mydoc greeting
 
 ```bash
 # Pull a specific version
-docker pull metagration/redis-automerge:1.0.0
+docker pull sammccord/valkey-automerge:1.0.0
 
 # Run the specific version
-docker run -d -p 6379:6379 metagration/redis-automerge:1.0.0
+docker run -d -p 6379:6379 sammccord/valkey-automerge:1.0.0
 ```
 
 ### Using Docker Compose
@@ -148,9 +148,9 @@ Create a `docker-compose.yml`:
 version: '3.8'
 services:
   redis:
-    image: metagration/redis-automerge:latest
+    image: sammccord/valkey-automerge:latest
     # Or pin to specific version for production:
-    # image: metagration/redis-automerge:1.0.0
+    # image: sammccord/valkey-automerge:1.0.0
     ports:
       - "6379:6379"
     volumes:
@@ -164,7 +164,7 @@ volumes:
 Then run:
 
 ```bash
-# Start Redis with module
+# Start Valkey with module
 docker compose up -d
 
 # View logs
@@ -184,24 +184,24 @@ All images are automatically built and tested before publishing. When a version 
 - **`latest`** - Latest stable release (recommended)
 - **`1.0.0`, `1.0`, `1`** - Semantic version tags for specific releases
 
-**Browse all tags**: https://hub.docker.com/r/metagration/redis-automerge/tags
+**Browse all tags**: https://hub.docker.com/r/sammccord/valkey-automerge/tags
 
-**View releases**: https://github.com/michelp/redis-automerge/releases
+**View releases**: https://github.com/sammccord/valkey-automerge/releases
 
 ### Updating to Latest Version
 
 ```bash
 # Pull the latest image
-docker pull metagration/redis-automerge:latest
+docker pull sammccord/valkey-automerge:latest
 
 # Recreate container with new image
 docker compose down
 docker compose up -d
 
 # Or with plain docker
-docker stop redis-automerge
-docker rm redis-automerge
-docker run -d --name redis-automerge -p 6379:6379 metagration/redis-automerge:latest
+docker stop valkey-automerge
+docker rm valkey-automerge
+docker run -d --name valkey-automerge -p 6379:6379 sammccord/valkey-automerge:latest
 ```
 
 ## Building
@@ -215,10 +215,10 @@ docker run -d --name redis-automerge -p 6379:6379 metagration/redis-automerge:la
 ### Build from Source
 
 ```bash
-cargo build --release --manifest-path redis-automerge/Cargo.toml
+cargo build --release --manifest-path valkey-automerge/Cargo.toml
 ```
 
-The compiled module will be at `redis-automerge/target/release/libredis_automerge.so`
+The compiled module will be at `valkey-automerge/target/release/libredis_automerge.so`
 
 ### Build with Docker
 
@@ -228,23 +228,23 @@ docker compose build
 
 ## Running
 
-### Load Module in Redis
+### Load Module in Valkey
 
 ```bash
-redis-server --loadmodule /path/to/libredis_automerge.so
+valkey-server --loadmodule /path/to/libvalkey_automerge.so
 ```
 
 ### Using Docker Compose
 
 ```bash
-# Start Redis with module loaded
+# Start Valkey with module loaded
 docker compose up redis
 
 # Run integration tests
 docker compose run --build --rm test
 ```
 
-## Redis Commands
+## Valkey Commands
 
 ### Document Management
 
@@ -276,7 +276,7 @@ Apply one or more Automerge changes to a document. Used for synchronization betw
 AM.APPLY mydoc <change1> <change2>
 ```
 
-Each change is published to the `changes:{key}` Redis pub/sub channel as base64-encoded data, enabling real-time synchronization across all connected clients.
+Each change is published to the `changes:{key}` Valkey pub/sub channel as base64-encoded data, enabling real-time synchronization across all connected clients.
 
 #### `AM.CHANGES <key> [<hash>...]`
 Get changes from a document that are not in the provided dependency list. Returns all changes when no hashes are provided.
@@ -749,7 +749,7 @@ AM.MAPLEN config database
 
 ## Real-Time Synchronization
 
-Redis-Automerge provides built-in support for real-time synchronization using Redis pub/sub.
+valkey-automerge provides built-in support for real-time synchronization using Redis pub/sub.
 
 ### Change Notifications
 
@@ -762,7 +762,7 @@ Message: base64-encoded Automerge change bytes
 
 ### Subscribing to Changes
 
-Clients can subscribe to document changes using Redis SUBSCRIBE:
+Clients can subscribe to document changes using SUBSCRIBE:
 
 ```redis
 SUBSCRIBE changes:mydoc
@@ -1102,7 +1102,7 @@ AM.TOJSON doc:proposal true
 
 ## Search Indexing (RediSearch Integration)
 
-The redis-automerge module provides automatic indexing of Automerge document fields to enable full-text search via [RediSearch](https://redis.io/docs/interact/search-and-query/). When configured, the module automatically creates and maintains shadow index documents (prefixed with `am:idx:`) that mirror specified fields from your Automerge documents.
+The valkey-automerge module provides automatic indexing of Automerge document fields to enable full-text search via [RediSearch](https://redis.io/docs/interact/search-and-query/). When configured, the module automatically creates and maintains shadow index documents (prefixed with `am:idx:`) that mirror specified fields from your Automerge documents.
 
 ### Index Formats
 
@@ -1477,7 +1477,7 @@ Shadow index documents are **not** automatically created when:
 ### Unit Tests
 
 ```bash
-cargo test --verbose --manifest-path redis-automerge/Cargo.toml
+cargo test --verbose --manifest-path valkey-automerge/Cargo.toml
 ```
 
 ### Integration Tests
@@ -1492,7 +1492,7 @@ docker compose down
 
 ```bash
 # Run both unit and integration tests
-cargo test --verbose --manifest-path redis-automerge/Cargo.toml
+cargo test --verbose --manifest-path valkey-automerge/Cargo.toml
 docker compose run --build --rm test
 docker compose down
 ```
@@ -1502,22 +1502,22 @@ docker compose down
 ### Online Documentation
 
 API documentation is automatically built and deployed to GitHub Pages:
-- **Latest docs**: [`https://michelp.github.io/redis-automerge/`](https://michelp.github.io/redis-automerge/`)
+- **Latest docs**: [`https://michelp.github.io/valkey-automerge/`](https://michelp.github.io/valkey-automerge/`)
 
 Documentation is updated automatically on every push to main.
 
 ### Generate Locally
 
 ```bash
-cargo doc --no-deps --manifest-path redis-automerge/Cargo.toml --open
+cargo doc --no-deps --manifest-path valkey-automerge/Cargo.toml --open
 ```
 
 This generates detailed API documentation for the Rust code and opens it in your browser.
 
 ## Architecture
 
-- **`redis-automerge/src/lib.rs`** - Redis module interface, command handlers, RDB/AOF persistence
-- **`redis-automerge/src/ext.rs`** - Automerge integration layer, path parsing, CRDT operations
+- **`valkey-automerge/src/lib.rs`** - Valkey module interface, command handlers, RDB/AOF persistence
+- **`valkey-automerge/src/ext.rs`** - Automerge integration layer, path parsing, CRDT operations
 
 ### Key Components
 
@@ -1527,15 +1527,15 @@ This generates detailed API documentation for the Rust code and opens it in your
 4. **Text Operations** - Efficient splice and diff operations for text editing
 5. **List Operations** - Create lists, append values, get length
 6. **Change Management** - Track and retrieve document changes for synchronization
-7. **Pub/Sub Integration** - Automatic change notifications via Redis channels
+7. **Pub/Sub Integration** - Automatic change notifications via pub/sub channels
 8. **Persistence** - RDB save/load and AOF change tracking
-9. **Replication** - Change propagation to Redis replicas
+9. **Replication** - Change propagation to Valkey replicas
 
 ### Synchronization Flow
 
 ```
 ┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│  Client A   │         │    Redis     │         │  Client B   │
+│  Client A   │         │    Valkey    │         │  Client B   │
 │  (Browser)  │         │ + Module     │         │  (Browser)  │
 └──────┬──────┘         └──────┬───────┘         └──────┬──────┘
        │                       │                        │
@@ -1557,5 +1557,5 @@ This generates detailed API documentation for the Rust code and opens it in your
 ## Resources
 
 - [Automerge Documentation](https://automerge.org/)
-- [Redis Module API](https://redis.io/topics/modules-intro)
-- [RedisJSON](https://redis.io/docs/stack/json/) - Similar path syntax reference
+- [Valkey Documentation](https://valkey.io/)
+- [Valkey Modules](https://valkey.io/topics/modules-intro)

@@ -1,10 +1,10 @@
 ///! Search indexing support for Automerge documents.
 ///!
 ///! This module provides functionality to automatically sync Automerge document fields
-///! to Redis Hashes or RedisJSON documents that can be indexed by RediSearch.
+///! to Valkey Hashes or JSON documents that can be indexed by search engines.
 
 use crate::ext::{RedisAutomergeClient, TypedValue};
-use redis_module::{Context, RedisError, RedisResult, RedisString, RedisValue};
+use valkey_module::{Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 
@@ -17,9 +17,9 @@ const INDEX_KEY_PREFIX: &str = "am:idx:";
 /// Format for shadow index documents
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexFormat {
-    /// Store as Redis Hash (flat key-value pairs)
+    /// Store as Valkey Hash (flat key-value pairs)
     Hash,
-    /// Store as RedisJSON document (preserves structure)
+    /// Store as JSON document (preserves structure)
     Json,
 }
 
@@ -75,7 +75,7 @@ impl IndexConfig {
     }
 
     /// Save configuration to Redis
-    pub fn save(&self, ctx: &Context) -> RedisResult<()> {
+    pub fn save(&self, ctx: &Context) -> ValkeyResult<()> {
         let key = ctx.create_string(self.config_key());
 
         // Store as Hash with fields: enabled, paths, format
@@ -111,14 +111,14 @@ impl IndexConfig {
     }
 
     /// Load configuration from Redis
-    pub fn load(ctx: &Context, pattern: &str) -> RedisResult<Option<Self>> {
+    pub fn load(ctx: &Context, pattern: &str) -> ValkeyResult<Option<Self>> {
         let key = ctx.create_string(format!("{}{}", INDEX_CONFIG_PREFIX, pattern));
 
         // Check if key exists
         let exists_result = ctx.call("EXISTS", &[&key])?;
         let exists: i64 = match exists_result {
-            RedisValue::Integer(i) => i,
-            _ => return Err(RedisError::Str("Unexpected response from EXISTS")),
+            ValkeyValue::Integer(i) => i,
+            _ => return Err(ValkeyError::Str("Unexpected response from EXISTS")),
         };
 
         if exists == 0 {
@@ -128,14 +128,14 @@ impl IndexConfig {
         // Get enabled field
         let enabled_result = ctx.call("HGET", &[&key, &ctx.create_string("enabled")])?;
         let enabled = match enabled_result {
-            RedisValue::SimpleString(s) | RedisValue::BulkString(s) => s == "1",
+            ValkeyValue::SimpleString(s) | ValkeyValue::BulkString(s) => s == "1",
             _ => true, // Default to enabled
         };
 
         // Get paths field
         let paths_result = ctx.call("HGET", &[&key, &ctx.create_string("paths")])?;
         let paths = match paths_result {
-            RedisValue::SimpleString(s) | RedisValue::BulkString(s) => s
+            ValkeyValue::SimpleString(s) | ValkeyValue::BulkString(s) => s
                 .split(',')
                 .map(|p| p.to_string())
                 .filter(|p| !p.is_empty())
@@ -146,7 +146,7 @@ impl IndexConfig {
         // Get format field (default to Hash for backward compatibility)
         let format_result = ctx.call("HGET", &[&key, &ctx.create_string("format")])?;
         let format = match format_result {
-            RedisValue::SimpleString(s) | RedisValue::BulkString(s) => {
+            ValkeyValue::SimpleString(s) | ValkeyValue::BulkString(s) => {
                 IndexFormat::from_str(&s).unwrap_or(IndexFormat::Hash)
             }
             _ => IndexFormat::Hash, // Default to Hash
@@ -161,18 +161,18 @@ impl IndexConfig {
     }
 
     /// Find the configuration that matches a given key
-    pub fn find_matching_config(ctx: &Context, key: &str) -> RedisResult<Option<Self>> {
+    pub fn find_matching_config(ctx: &Context, key: &str) -> ValkeyResult<Option<Self>> {
         // Get all configuration keys
         let pattern = format!("{}*", INDEX_CONFIG_PREFIX);
         let result = ctx.call("KEYS", &[&ctx.create_string(pattern)])?;
 
         // Handle the Array result
-        let config_keys: Vec<RedisString> = match result {
-            RedisValue::Array(keys) => keys
+        let config_keys: Vec<ValkeyString> = match result {
+            ValkeyValue::Array(keys) => keys
                 .into_iter()
                 .filter_map(|v| match v {
-                    RedisValue::BulkString(s) => Some(ctx.create_string(s)),
-                    RedisValue::SimpleString(s) => Some(ctx.create_string(s)),
+                    ValkeyValue::BulkString(s) => Some(ctx.create_string(s)),
+                    ValkeyValue::SimpleString(s) => Some(ctx.create_string(s)),
                     _ => None,
                 })
                 .collect(),
@@ -368,7 +368,7 @@ pub fn update_json_index(
     am_key: &str,
     client: &RedisAutomergeClient,
     config: &IndexConfig,
-) -> RedisResult<bool> {
+) -> ValkeyResult<bool> {
     // Build JSON document from configured paths
     let json_doc = match build_json_document(client, &config.paths) {
         Some(doc) => doc,
@@ -382,7 +382,7 @@ pub fn update_json_index(
 
     // Serialize JSON to string
     let json_str = serde_json::to_string(&json_doc)
-        .map_err(|e| RedisError::String(format!("Failed to serialize JSON: {}", e)))?;
+        .map_err(|e| ValkeyError::String(format!("Failed to serialize JSON: {}", e)))?;
 
     // Store as RedisJSON document
     let index_key = get_index_key(am_key);
@@ -406,7 +406,7 @@ pub fn update_search_index(
     ctx: &Context,
     am_key: &str,
     client: &RedisAutomergeClient,
-) -> RedisResult<bool> {
+) -> ValkeyResult<bool> {
     // Find matching configuration
     let config = match IndexConfig::find_matching_config(ctx, am_key)? {
         Some(cfg) if cfg.enabled => cfg,
@@ -426,7 +426,7 @@ fn update_hash_index(
     am_key: &str,
     client: &RedisAutomergeClient,
     config: &IndexConfig,
-) -> RedisResult<bool> {
+) -> ValkeyResult<bool> {
     // Extract configured fields
     let fields = extract_indexed_fields(client, &config.paths);
 
@@ -460,7 +460,7 @@ fn update_hash_index(
 }
 
 /// Delete the search index Hash for a given Automerge key
-pub fn delete_search_index(ctx: &Context, am_key: &str) -> RedisResult<()> {
+pub fn delete_search_index(ctx: &Context, am_key: &str) -> ValkeyResult<()> {
     let index_key = get_index_key(am_key);
     ctx.call("DEL", &[&ctx.create_string(index_key)])?;
     Ok(())

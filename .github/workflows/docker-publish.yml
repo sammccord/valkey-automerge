@@ -11,21 +11,21 @@ on:
       - main
       - master
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   pull_request:
     branches:
       - main
       - master
 
 env:
-  IMAGE_NAME: metagration/redis-automerge
+  IMAGE_NAME: sammccord/valkey-automerge
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for creating releases
-      packages: write  # Required for pushing to registries
+      contents: write # Required for creating releases
+      packages: write # Required for pushing to registries
 
     steps:
       - name: Checkout code
@@ -98,8 +98,8 @@ jobs:
             This release is available on Docker Hub:
 
             ```bash
-            docker pull metagration/redis-automerge:${{ steps.meta.outputs.version }}
-            docker pull metagration/redis-automerge:latest
+            docker pull sammccord/valkey-automerge:${{ steps.meta.outputs.version }}
+            docker pull sammccord/valkey-automerge:latest
             ```
 
             ### Available Tags
@@ -108,13 +108,13 @@ jobs:
             ### Quick Start
 
             ```bash
-            # Run Redis with the module
-            docker run -d -p 6379:6379 metagration/redis-automerge:${{ steps.meta.outputs.version }}
+            # Run Valkey with the module
+            docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.meta.outputs.version }}
 
             # Test it works
-            redis-cli AM.NEW mydoc
-            redis-cli AM.PUTTEXT mydoc greeting "Hello, Automerge!"
-            redis-cli AM.GETTEXT mydoc greeting
+            valkey-cli AM.NEW mydoc
+            valkey-cli AM.PUTTEXT mydoc greeting "Hello, Automerge!"
+            valkey-cli AM.GETTEXT mydoc greeting
             ```
 
             ### Full Documentation
