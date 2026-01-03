@@ -46,6 +46,13 @@ jobs:
   build:
     name: Build Release
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - variant: debian
+            dockerfile: Dockerfile
+          - variant: alpine
+            dockerfile: Dockerfile.alpine
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -53,21 +60,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
-        run: docker compose build redis
+      - name: Build Docker image (${{ matrix.variant }})
+        run: docker build -f ${{ matrix.dockerfile }} -t valkey-automerge-${{ matrix.variant }} .
 
       - name: Extract built module from Docker image
         run: |
           # Create a temporary container from the built image
-          docker create --name temp-container valkey-automerge-redis
+          docker create --name temp-container valkey-automerge-${{ matrix.variant }}
           # Copy the built module out
-          docker cp temp-container:/usr/lib/valkey/modules/valkey-automerge.so ./libvalkey_automerge.so
+          docker cp temp-container:/usr/lib/valkey/modules/valkey-automerge.so ./libvalkey_automerge-${{ matrix.variant }}.so
           # Clean up
           docker rm temp-container
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: valkey-automerge-module
-          path: libvalkey_automerge.so
+          name: valkey-automerge-module-${{ matrix.variant }}
+          path: libvalkey_automerge-${{ matrix.variant }}.so
           retention-days: 7

@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 # Workflow behavior:
 # - Push to main/master: Build and test only (no Docker Hub push)
-# - Version tags (v*.*.*): Build, test, and push to Docker Hub
+# - Version tags (v*.*.*): Build, test, and push to Docker Hub (multi-arch)
 # - Pull requests: Build and test only (no Docker Hub push)
 
 on:
@@ -24,12 +24,25 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required for creating releases
-      packages: write # Required for pushing to registries
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - variant: debian
+            dockerfile: Dockerfile
+            suffix: ""
+          - variant: alpine
+            dockerfile: Dockerfile.alpine
+            suffix: "-alpine"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,6 +59,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=${{ matrix.suffix }}
           tags: |
             # For version tags (v1.2.3), generate multiple tags
             type=semver,pattern={{version}}
@@ -54,62 +69,90 @@ jobs:
             # Tag latest for version releases
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      - name: Build Docker image
+      # Build single-arch for testing (load doesn't support multi-platform)
+      - name: Build Docker image for testing
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           load: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ env.IMAGE_NAME }}:test-${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 
+      # Only run integration tests on Debian variant (tests use valkey-cli from debian image)
       - name: Run integration tests
+        if: matrix.variant == 'debian'
         run: |
-          # Use docker compose to run tests with the freshly built image
           docker compose run --rm test
           docker compose down
 
-      - name: Push Docker image to Docker Hub
+      # Build and push multi-arch on version tags
+      - name: Build and push multi-arch Docker image
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 
       - name: Display pushed tags
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          echo "Successfully pushed the following tags:"
+          echo "Successfully pushed the following tags for ${{ matrix.variant }}:"
           echo "${{ steps.meta.outputs.tags }}"
 
+  # Create release after all variants are built
+  release:
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
           body: |
             ## Docker Images
 
-            This release is available on Docker Hub:
+            This release is available on Docker Hub with multi-architecture support (amd64, arm64):
 
+            ### Debian-based (default)
             ```bash
-            docker pull sammccord/valkey-automerge:${{ steps.meta.outputs.version }}
+            docker pull sammccord/valkey-automerge:${{ steps.version.outputs.version }}
             docker pull sammccord/valkey-automerge:latest
             ```
 
-            ### Available Tags
-            ${{ steps.meta.outputs.tags }}
+            ### Alpine-based (smaller image)
+            ```bash
+            docker pull sammccord/valkey-automerge:${{ steps.version.outputs.version }}-alpine
+            docker pull sammccord/valkey-automerge:latest-alpine
+            ```
+
+            ### Supported Architectures
+            - `linux/amd64` (x86_64)
+            - `linux/arm64` (aarch64, Apple Silicon, AWS Graviton)
 
             ### Quick Start
 
             ```bash
             # Run Valkey with the module
-            docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.meta.outputs.version }}
+            docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.version.outputs.version }}
 
             # Test it works
             valkey-cli AM.NEW mydoc
