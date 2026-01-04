@@ -49,10 +49,16 @@ jobs:
     strategy:
       matrix:
         include:
+          # Base images (valkey-automerge only)
           - variant: debian
             dockerfile: Dockerfile
           - variant: alpine
             dockerfile: Dockerfile.alpine
+          # Full images (valkey-automerge + RedisJSON)
+          - variant: full
+            dockerfile: Dockerfile.full
+          - variant: full-alpine
+            dockerfile: Dockerfile.full-alpine
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

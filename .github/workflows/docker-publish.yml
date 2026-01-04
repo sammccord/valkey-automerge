@@ -30,12 +30,20 @@ jobs:
     strategy:
       matrix:
         include:
+          # Base images (valkey-automerge only)
           - variant: debian
             dockerfile: Dockerfile
             suffix: ""
           - variant: alpine
             dockerfile: Dockerfile.alpine
             suffix: "-alpine"
+          # Full images (valkey-automerge + RedisJSON)
+          - variant: full
+            dockerfile: Dockerfile.full
+            suffix: "-full"
+          - variant: full-alpine
+            dockerfile: Dockerfile.full-alpine
+            suffix: "-full-alpine"
 
     steps:
       - name: Checkout code
@@ -144,6 +152,20 @@ jobs:
             docker pull sammccord/valkey-automerge:latest-alpine
             ```
 
+            ### Full Images (with RedisJSON)
+
+            These images include both valkey-automerge and RedisJSON modules for complete JSON indexing support:
+
+            ```bash
+            # Debian-based with RedisJSON
+            docker pull sammccord/valkey-automerge:${{ steps.version.outputs.version }}-full
+            docker pull sammccord/valkey-automerge:latest-full
+
+            # Alpine-based with RedisJSON
+            docker pull sammccord/valkey-automerge:${{ steps.version.outputs.version }}-full-alpine
+            docker pull sammccord/valkey-automerge:latest-full-alpine
+            ```
+
             ### Supported Architectures
             - `linux/amd64` (x86_64)
             - `linux/arm64` (aarch64, Apple Silicon, AWS Graviton)
@@ -153,6 +175,9 @@ jobs:
             ```bash
             # Run Valkey with the module
             docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.version.outputs.version }}
+
+            # Or use the full image with RedisJSON support
+            docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.version.outputs.version }}-full
 
             # Test it works
             valkey-cli AM.NEW mydoc

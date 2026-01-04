@@ -1,0 +1,86 @@
+# Build Valkey with Automerge + RedisJSON modules (Alpine variant)
+#
+# This "full" image includes both:
+# - valkey-automerge: CRDT document storage with Automerge
+# - RedisJSON: JSON data type support for advanced indexing
+#
+# Use this image if you need JSON-based search indexing features.
+#
+# Note: Both modules are built with glibc and require gcompat on Alpine.
+
+# ============================================================================
+# Stage 1: Build valkey-automerge module
+# ============================================================================
+FROM rust:1 AS automerge-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y clang git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Clone Automerge 3.1.2 from GitHub
+RUN git clone --depth 1 --branch js/automerge-3.1.2 https://github.com/automerge/automerge.git /build/automerge-src
+
+# Copy our valkey-automerge module code
+COPY valkey-automerge/ ./valkey-automerge/
+
+# Update Cargo.toml to use automerge from the cloned git repo
+RUN cd valkey-automerge && \
+  sed -i 's|automerge = ".*"|automerge = { path = "/build/automerge-src/rust/automerge" }|' Cargo.toml
+
+# Build the Valkey module
+RUN cargo build --release --manifest-path valkey-automerge/Cargo.toml
+
+# ============================================================================
+# Stage 2: Build RedisJSON module
+# ============================================================================
+FROM rust:1 AS rejson-builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    clang \
+    libclang-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Clone RedisJSON - use a stable version
+RUN git clone --depth 1 --branch v2.8.4 https://github.com/RedisJSON/RedisJSON.git .
+
+# Initialize submodules (required for build)
+RUN git submodule update --init --recursive
+
+# Build RedisJSON
+RUN cargo build --release --all
+
+# ============================================================================
+# Stage 3: Runtime image with both modules (Alpine)
+# ============================================================================
+FROM valkey/valkey:8.0-alpine
+
+# Install gcompat for glibc compatibility on Alpine
+# This allows glibc-compiled shared libraries to work on musl-based Alpine
+RUN apk add --no-cache gcompat
+
+# Copy both modules
+COPY --from=automerge-builder /build/valkey-automerge/target/release/libvalkey_automerge.so /usr/lib/valkey/modules/valkey-automerge.so
+COPY --from=rejson-builder /build/target/release/librejson.so /usr/lib/valkey/modules/rejson.so
+
+# Load both modules on startup
+CMD ["valkey-server", \
+  "--loadmodule", "/usr/lib/valkey/modules/valkey-automerge.so", \
+  "--loadmodule", "/usr/lib/valkey/modules/rejson.so", \
+  "--loglevel", "notice", \
+  "--logfile", "", \
+  "--slowlog-log-slower-than", "0", \
+  "--slowlog-max-len", "128", \
+  "--notify-keyspace-events", "KEA", \
+  "--dir", "/data", \
+  "--save", "", \
+  "--appendonly", "yes", \
+  "--appendfilename", "appendonly.aof", \
+  "--appendfsync", "everysec", \
+  "--aof-use-rdb-preamble", "no", \
+  "--enable-debug-command", "yes"]

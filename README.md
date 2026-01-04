@@ -140,6 +140,25 @@ docker pull sammccord/valkey-automerge:1.0.0
 docker run -d -p 6379:6379 sammccord/valkey-automerge:1.0.0
 ```
 
+#### Full Image with RedisJSON
+
+For complete JSON-based search indexing support, use the `-full` variant which includes both valkey-automerge and RedisJSON:
+
+```bash
+# Pull the full image with RedisJSON
+docker pull sammccord/valkey-automerge:latest-full
+
+# Run with both modules
+docker run -d --name valkey-full -p 6379:6379 sammccord/valkey-automerge:latest-full
+
+# Verify modules are loaded
+valkey-cli MODULE LIST
+# Returns both 'automerge' and 'ReJSON' modules
+
+# Use JSON indexing features
+valkey-cli AM.INDEX.CONFIGURE "product:*" --format json title price tags
+```
+
 ### Using Docker Compose
 
 Create a `docker-compose.yml`:
@@ -181,8 +200,39 @@ All images are automatically built and tested before publishing. When a version 
 - Pushes to Docker Hub (if tests pass)
 - Creates a GitHub release with documentation
 
-- **`latest`** - Latest stable release (recommended)
-- **`1.0.0`, `1.0`, `1`** - Semantic version tags for specific releases
+All images support multi-architecture: `linux/amd64` (x86_64) and `linux/arm64` (Apple Silicon, AWS Graviton).
+
+#### Base Images (valkey-automerge only)
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable Debian-based release (recommended) |
+| `latest-alpine` | Latest stable Alpine-based release (smaller image) |
+| `1.0.0`, `1.0`, `1` | Semantic version tags (Debian-based) |
+| `1.0.0-alpine` | Semantic version tags (Alpine-based) |
+
+#### Full Images (valkey-automerge + RedisJSON)
+
+These images include both valkey-automerge and [RedisJSON](https://github.com/RedisJSON/RedisJSON) modules, enabling JSON-based search indexing features without additional configuration.
+
+| Tag | Description |
+|-----|-------------|
+| `latest-full` | Latest stable with RedisJSON (Debian-based) |
+| `latest-full-alpine` | Latest stable with RedisJSON (Alpine-based) |
+| `1.0.0-full` | Semantic version with RedisJSON (Debian-based) |
+| `1.0.0-full-alpine` | Semantic version with RedisJSON (Alpine-based) |
+
+```bash
+# Pull the full image with RedisJSON support
+docker pull sammccord/valkey-automerge:latest-full
+
+# Run with both modules loaded
+docker run -d -p 6379:6379 sammccord/valkey-automerge:latest-full
+
+# Verify both modules are loaded
+valkey-cli MODULE LIST
+# Returns: automerge, ReJSON
+```
 
 **Browse all tags**: https://hub.docker.com/r/sammccord/valkey-automerge/tags
 
