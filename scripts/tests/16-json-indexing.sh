@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Test JSON-based search indexing functionality
 #
-# NOTE: These tests require the RedisJSON module to be loaded.
-# If RedisJSON is not available, the tests will be skipped.
+# NOTE: These tests require the valkey-json module to be loaded.
+# If valkey-json is not available, the tests will be skipped.
 
 set -euo pipefail
 
@@ -12,16 +12,16 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 print_section "JSON-based Search Indexing"
 
-# Check if RedisJSON is available
-echo "Checking for RedisJSON module..."
-if ! redis-cli -h "$HOST" module list 2>/dev/null | grep -q "ReJSON"; then
-    echo "⚠️  RedisJSON module not found - skipping JSON indexing tests"
-    echo "   To run these tests, install RedisJSON: https://redis.io/docs/stack/json/"
+# Check if valkey-json is available
+echo "Checking for valkey-json module..."
+if ! redis-cli -h "$HOST" module list 2>/dev/null | grep -qi "json"; then
+    echo "⚠️  valkey-json module not found - skipping JSON indexing tests"
+    echo "   To run these tests, use the -full Docker image with valkey-json"
     echo ""
-    echo "✅ JSON indexing tests skipped (RedisJSON not available)"
+    echo "✅ JSON indexing tests skipped (valkey-json not available)"
     exit 0
 fi
-echo "   ✓ RedisJSON module found"
+echo "   ✓ valkey-json module found"
 
 # Test 1: Configure JSON indexing for a pattern
 echo "Test 1: Configure JSON indexing with --format json..."
@@ -236,10 +236,10 @@ echo "   ✓ Complex nested JSON structure works correctly"
 
 # Test 16: FT.CREATE and FT.SEARCH with JSON - Array search
 echo "Test 16: RediSearch JSON integration - Array/tag search..."
-# Check if RediSearch is available
-if ! redis-cli -h "$HOST" module list 2>/dev/null | grep -q "search"; then
-    echo "   ⚠️  RediSearch module not found - skipping FT.SEARCH tests"
-    echo "   To run these tests, install RediSearch: https://redis.io/docs/stack/search/"
+# Check if valkey-search is available
+if ! redis-cli -h "$HOST" module list 2>/dev/null | grep -qi "search"; then
+    echo "   ⚠️  valkey-search module not found - skipping FT.SEARCH tests"
+    echo "   To run these tests, use the -full Docker image with valkey-search"
     echo ""
     echo "✅ All JSON-based indexing tests passed (FT.SEARCH tests skipped)!"
     exit 0

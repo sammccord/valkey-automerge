@@ -140,12 +140,12 @@ docker pull sammccord/valkey-automerge:1.0.0
 docker run -d -p 6379:6379 sammccord/valkey-automerge:1.0.0
 ```
 
-#### Full Image with RedisJSON
+#### Full Image with valkey-json
 
-For complete JSON-based search indexing support, use the `-full` variant which includes both valkey-automerge and RedisJSON:
+For complete JSON-based search indexing support, use the `-full` variant which includes both valkey-automerge and valkey-json:
 
 ```bash
-# Pull the full image with RedisJSON
+# Pull the full image with valkey-json
 docker pull sammccord/valkey-automerge:latest-full
 
 # Run with both modules
@@ -153,7 +153,7 @@ docker run -d --name valkey-full -p 6379:6379 sammccord/valkey-automerge:latest-
 
 # Verify modules are loaded
 valkey-cli MODULE LIST
-# Returns both 'automerge' and 'ReJSON' modules
+# Returns both 'automerge' and 'json' modules
 
 # Use JSON indexing features
 valkey-cli AM.INDEX.CONFIGURE "product:*" --format json title price tags
@@ -211,19 +211,19 @@ All images support multi-architecture: `linux/amd64` (x86_64) and `linux/arm64` 
 | `1.0.0`, `1.0`, `1` | Semantic version tags (Debian-based) |
 | `1.0.0-alpine` | Semantic version tags (Alpine-based) |
 
-#### Full Images (valkey-automerge + RedisJSON)
+#### Full Images (valkey-automerge + valkey-json)
 
-These images include both valkey-automerge and [RedisJSON](https://github.com/RedisJSON/RedisJSON) modules, enabling JSON-based search indexing features without additional configuration.
+These images include both valkey-automerge and [valkey-json](https://github.com/valkey-io/valkey-json) modules, enabling JSON-based search indexing features without additional configuration.
 
 | Tag | Description |
 |-----|-------------|
-| `latest-full` | Latest stable with RedisJSON (Debian-based) |
-| `latest-full-alpine` | Latest stable with RedisJSON (Alpine-based) |
-| `1.0.0-full` | Semantic version with RedisJSON (Debian-based) |
-| `1.0.0-full-alpine` | Semantic version with RedisJSON (Alpine-based) |
+| `latest-full` | Latest stable with valkey-json (Debian-based) |
+| `latest-full-alpine` | Latest stable with valkey-json (Alpine-based) |
+| `1.0.0-full` | Semantic version with valkey-json (Debian-based) |
+| `1.0.0-full-alpine` | Semantic version with valkey-json (Alpine-based) |
 
 ```bash
-# Pull the full image with RedisJSON support
+# Pull the full image with valkey-json support
 docker pull sammccord/valkey-automerge:latest-full
 
 # Run with both modules loaded
@@ -231,7 +231,7 @@ docker run -d -p 6379:6379 sammccord/valkey-automerge:latest-full
 
 # Verify both modules are loaded
 valkey-cli MODULE LIST
-# Returns: automerge, ReJSON
+# Returns: automerge, json
 ```
 
 **Browse all tags**: https://hub.docker.com/r/sammccord/valkey-automerge/tags
@@ -1159,7 +1159,7 @@ The valkey-automerge module provides automatic indexing of Automerge document fi
 The module supports two indexing formats:
 
 1. **Hash Format** (default): Creates Redis Hash keys with flattened field names. Best for simple text search with minimal overhead.
-2. **JSON Format**: Creates RedisJSON documents with nested structure preserved. Best for complex queries, array search, and type preservation.
+2. **JSON Format**: Creates JSON documents (via valkey-json) with nested structure preserved. Best for complex queries, array search, and type preservation.
 
 ### How It Works
 
@@ -1194,7 +1194,7 @@ AM.INDEX.CONFIGURE "article:*" title content author.name
 AM.INDEX.CONFIGURE "user:*" --format hash name email profile.bio
 ```
 
-JSON format (requires RedisJSON):
+JSON format (requires valkey-json):
 ```bash
 # Index as JSON document with nested structure preserved
 AM.INDEX.CONFIGURE "product:*" --format json title price description tags
@@ -1309,13 +1309,13 @@ AM.INDEX.CONFIGURE "article:*" title content author.name
 - Better for structured data
 
 **Cons:**
-- Requires RedisJSON module
+- Requires valkey-json module
 - Higher memory overhead
 - Slightly slower updates
 
 **Requirements:**
-- RedisJSON module must be loaded: `redis-server --loadmodule /path/to/rejson.so`
-- Available in Redis Stack or as standalone module
+- valkey-json module must be loaded: `valkey-server --loadmodule /path/to/libjson.so`
+- Use the `-full` Docker image variant or install valkey-json separately
 
 **Structure Preservation:**
 - Nested paths create nested objects: `author.name` → `{"author": {"name": "Alice"}}`

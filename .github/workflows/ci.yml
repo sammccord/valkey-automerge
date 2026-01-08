@@ -54,7 +54,7 @@ jobs:
             dockerfile: Dockerfile
           - variant: alpine
             dockerfile: Dockerfile.alpine
-          # Full images (valkey-automerge + RedisJSON)
+          # Full images (valkey-automerge + valkey-json)
           - variant: full
             dockerfile: Dockerfile.full
           - variant: full-alpine

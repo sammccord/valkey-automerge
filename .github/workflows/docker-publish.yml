@@ -37,7 +37,7 @@ jobs:
           - variant: alpine
             dockerfile: Dockerfile.alpine
             suffix: "-alpine"
-          # Full images (valkey-automerge + RedisJSON)
+          # Full images (valkey-automerge + valkey-json)
           - variant: full
             dockerfile: Dockerfile.full
             suffix: "-full"
@@ -152,16 +152,16 @@ jobs:
             docker pull sammccord/valkey-automerge:latest-alpine
             ```
 
-            ### Full Images (with RedisJSON)
+            ### Full Images (with valkey-json)
 
-            These images include both valkey-automerge and RedisJSON modules for complete JSON indexing support:
+            These images include both valkey-automerge and valkey-json modules for complete JSON indexing support:
 
             ```bash
-            # Debian-based with RedisJSON
+            # Debian-based with valkey-json
             docker pull sammccord/valkey-automerge:${{ steps.version.outputs.version }}-full
             docker pull sammccord/valkey-automerge:latest-full
 
-            # Alpine-based with RedisJSON
+            # Alpine-based with valkey-json
             docker pull sammccord/valkey-automerge:${{ steps.version.outputs.version }}-full-alpine
             docker pull sammccord/valkey-automerge:latest-full-alpine
             ```
@@ -176,7 +176,7 @@ jobs:
             # Run Valkey with the module
             docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.version.outputs.version }}
 
-            # Or use the full image with RedisJSON support
+            # Or use the full image with valkey-json support
             docker run -d -p 6379:6379 sammccord/valkey-automerge:${{ steps.version.outputs.version }}-full
 
             # Test it works

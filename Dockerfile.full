@@ -1,10 +1,10 @@
-# Build Valkey with Automerge + RedisJSON modules (Debian variant)
+# Build Valkey with Automerge + valkey-json modules (Debian variant)
 #
-# This "full" image includes both:
+# This "full" image includes:
 # - valkey-automerge: CRDT document storage with Automerge
-# - RedisJSON: JSON data type support for advanced indexing
+# - valkey-json: JSON data type support for advanced indexing
 #
-# Use this image if you need JSON-based search indexing features.
+# Use this image if you need JSON-based indexing features.
 
 # ============================================================================
 # Stage 1: Build valkey-automerge module
@@ -30,42 +30,39 @@ RUN cd valkey-automerge && \
 RUN cargo build --release --manifest-path valkey-automerge/Cargo.toml
 
 # ============================================================================
-# Stage 2: Build RedisJSON module
+# Stage 2: Build valkey-json module
 # ============================================================================
-FROM rust:1 AS rejson-builder
+FROM debian:bookworm AS json-builder
 
-# Install build dependencies
+# Install build dependencies for CMake-based build
 RUN apt-get update && apt-get install -y \
     build-essential \
-    clang \
-    libclang-dev \
+    cmake \
     git \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Clone RedisJSON - use a stable version
-RUN git clone --depth 1 --branch v2.8.4 https://github.com/RedisJSON/RedisJSON.git .
+# Clone valkey-json from official Valkey repository
+RUN git clone --depth 1 --branch unstable https://github.com/valkey-io/valkey-json.git .
 
-# Initialize submodules (required for build)
-RUN git submodule update --init --recursive
-
-# Build RedisJSON
-RUN cargo build --release --all
+# Build valkey-json using the provided build script
+RUN ./build.sh
 
 # ============================================================================
-# Stage 3: Runtime image with both modules
+# Stage 3: Runtime image with all modules
 # ============================================================================
 FROM valkey/valkey:8.0
 
-# Copy both modules
+# Copy all modules
 COPY --from=automerge-builder /build/valkey-automerge/target/release/libvalkey_automerge.so /usr/lib/valkey/modules/valkey-automerge.so
-COPY --from=rejson-builder /build/target/release/librejson.so /usr/lib/valkey/modules/rejson.so
+COPY --from=json-builder /build/build/src/libjson.so /usr/lib/valkey/modules/libjson.so
 
-# Load both modules on startup
+# Load all modules on startup
 CMD ["valkey-server", \
   "--loadmodule", "/usr/lib/valkey/modules/valkey-automerge.so", \
-  "--loadmodule", "/usr/lib/valkey/modules/rejson.so", \
+  "--loadmodule", "/usr/lib/valkey/modules/libjson.so", \
   "--loglevel", "notice", \
   "--logfile", "", \
   "--slowlog-log-slower-than", "0", \
