@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Common test utilities for Valkey Automerge Module tests
 
-# Valkey host configuration
+# Valkey CLI and host configuration
+VALKEY_CLI="${VALKEY_CLI:-valkey-cli}"
 HOST="${VALKEY_HOST:-127.0.0.1}"
 
 # Color output for better readability
@@ -38,7 +39,7 @@ test_notification() {
     local output_file="/tmp/notif_test_$$.txt"
 
     # Start subscriber in background with timeout (1 second)
-    timeout 1 valkey-cli -h "$HOST" PSUBSCRIBE "__keyspace@0__:$key" > "$output_file" 2>&1 &
+    timeout 1 $VALKEY_CLI -h "$HOST" PSUBSCRIBE "__keyspace@0__:$key" > "$output_file" 2>&1 &
     local sub_pid=$!
 
     # Wait for subscription to be ready
@@ -72,7 +73,7 @@ test_change_publication() {
     local output_file="/tmp/change_pub_$$.txt"
 
     # Subscribe to changes channel
-    timeout 2 valkey-cli -h "$HOST" SUBSCRIBE "changes:$key" > "$output_file" 2>&1 &
+    timeout 2 $VALKEY_CLI -h "$HOST" SUBSCRIBE "changes:$key" > "$output_file" 2>&1 &
     local sub_pid=$!
     sleep 0.3
 
@@ -107,13 +108,13 @@ setup_test_env() {
     fi
 
     # Check server connection
-    if ! valkey-cli -h "$HOST" ping > /dev/null 2>&1; then
+    if ! $VALKEY_CLI -h "$HOST" ping > /dev/null 2>&1; then
         echo "❌ Cannot connect to Valkey at $HOST"
         exit 1
     fi
 
     # Clear any persisted data
-    valkey-cli -h "$HOST" flushall > /dev/null 2>&1
+    $VALKEY_CLI -h "$HOST" flushall > /dev/null 2>&1
 
     echo "✓ Test environment ready"
 }
@@ -133,12 +134,12 @@ restart_valkey() {
     echo "   Restarting Valkey (DEBUG RESTART)..."
     # DEBUG RESTART will cause Valkey to reload from AOF/RDB
     # It will disconnect us, so we need to handle the error
-    valkey-cli -h "$HOST" DEBUG RESTART > /dev/null 2>&1 || true
+    $VALKEY_CLI -h "$HOST" DEBUG RESTART > /dev/null 2>&1 || true
     sleep 2
 
     # Wait for Valkey to be ready
     for i in {1..15}; do
-        if valkey-cli -h "$HOST" ping > /dev/null 2>&1; then
+        if $VALKEY_CLI -h "$HOST" ping > /dev/null 2>&1; then
             return 0
         fi
         sleep 1

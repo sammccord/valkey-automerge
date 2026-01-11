@@ -19,15 +19,8 @@ RUN apt-get update && apt-get install -y clang git && rm -rf /var/lib/apt/lists/
 
 WORKDIR /build
 
-# Clone Automerge 3.1.2 from GitHub
-RUN git clone --depth 1 --branch js/automerge-3.1.2 https://github.com/automerge/automerge.git /build/automerge-src
-
 # Copy our valkey-automerge module code
 COPY valkey-automerge/ ./valkey-automerge/
-
-# Update Cargo.toml to use automerge from the cloned git repo
-RUN cd valkey-automerge && \
-  sed -i 's|automerge = ".*"|automerge = { path = "/build/automerge-src/rust/automerge" }|' Cargo.toml
 
 # Build the Valkey module
 RUN cargo build --release --manifest-path valkey-automerge/Cargo.toml
@@ -35,7 +28,7 @@ RUN cargo build --release --manifest-path valkey-automerge/Cargo.toml
 # ============================================================================
 # Stage 2: Build valkey-json module (Alpine native build)
 # ============================================================================
-FROM alpine:3.20 AS json-builder
+FROM alpine:3.23 AS json-builder
 
 # Install build dependencies for CMake-based build on Alpine
 RUN apk add --no-cache \
@@ -55,22 +48,58 @@ RUN git clone --depth 1 --branch unstable https://github.com/valkey-io/valkey-js
 RUN ./build.sh
 
 # ============================================================================
-# Stage 3: Runtime image with all modules (Alpine)
+# Stage 3: Build valkey-search module
 # ============================================================================
-FROM valkey/valkey:8.0-alpine
+FROM alpine:3.23 AS search-builder
+
+# Install build dependencies for CMake-based build
+RUN apk add --no-cache          \
+	        ca-certificates       \
+	        build-base            \
+	        cmake                 \
+	        git                   \
+	        curl                  \
+	        clang                 \
+	        clang19-dev           \
+	        gtest-dev             \
+	        ninja-build           \
+	        ninja-is-really-ninja \
+	        openssl-dev           \
+	        clang19-extra-tools   \
+	        linux-headers         \
+	        bash                  \
+          pkgconfig;            \
+    update-ca-certificates; \
+    ln -s /usr/lib/ninja-build/bin/ninja /usr/bin/ninja-build;
+
+WORKDIR /build
+
+# Clone valkey-json from official Valkey repository
+RUN git clone --depth 1 --branch 1.1.0 https://github.com/valkey-io/valkey-search.git .
+
+# Build valkey-search using the provided build script
+RUN set -eux; \
+    ./build.sh --jobs=4
+
+# ============================================================================
+# Stage 4: Runtime image with all modules (Alpine)
+# ============================================================================
+FROM valkey/valkey:9-alpine
 
 # Install gcompat for glibc compatibility (for valkey-automerge built with Rust/glibc)
 # and libstdc++ for C++ modules (valkey-json)
 RUN apk add --no-cache gcompat libstdc++
 
-# Copy all modules
-COPY --from=automerge-builder /build/valkey-automerge/target/release/libvalkey_automerge.so /usr/lib/valkey/modules/valkey-automerge.so
-COPY --from=json-builder /build/build/src/libjson.so /usr/lib/valkey/modules/libjson.so
+# Copy all modules to /usr/lib/valkey/
+COPY --from=automerge-builder /build/valkey-automerge/target/release/libvalkey_automerge.so /usr/lib/valkey/libautomerge.so
+COPY --from=json-builder /build/build/src/libjson.so /usr/lib/valkey/libjson.so
+COPY --from=search-builder /build/.build-release/libsearch.so /usr/lib/valkey/libsearch.so
 
 # Load all modules on startup
 CMD ["valkey-server", \
-  "--loadmodule", "/usr/lib/valkey/modules/valkey-automerge.so", \
-  "--loadmodule", "/usr/lib/valkey/modules/libjson.so", \
+  "--loadmodule", "/usr/lib/valkey/libjson.so", \
+  "--loadmodule", "/usr/lib/valkey/libsearch.so", \
+  "--loadmodule", "/usr/lib/valkey/libautomerge.so", \
   "--loglevel", "notice", \
   "--logfile", "", \
   "--slowlog-log-slower-than", "0", \

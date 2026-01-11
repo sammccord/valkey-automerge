@@ -23,6 +23,7 @@
 //! ## Value Operations
 //! - `AM.PUTTEXT <key> <path> <value>` - Set a text value
 //! - `AM.GETTEXT <key> <path>` - Get a text value
+//! - `AM.DELETE <key> <path>` - Delete a value at the specified path
 //! - `AM.PUTDIFF <key> <path> <diff>` - Apply a unified diff to update text efficiently
 //! - `AM.SPLICETEXT <key> <path> <pos> <del> <text>` - Splice text at position (insert/delete/replace)
 //! - `AM.PUTINT <key> <path> <value>` - Set an integer value
@@ -296,6 +297,15 @@ fn am_putdiff(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putdiff", &refs[..]);
     ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putdiff", key_name);
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -338,6 +348,15 @@ fn am_splicetext(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.splicetext",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -544,6 +563,15 @@ fn am_putint(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putint", &refs[..]);
     ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putint", key_name);
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -593,6 +621,15 @@ fn am_putdouble(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putdouble", &refs[..]);
     ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putdouble", key_name);
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -645,6 +682,15 @@ fn am_putbool(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.putbool", &refs[..]);
     ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.putbool", key_name);
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -665,6 +711,42 @@ fn am_getbool(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         Some(value) => Ok(ValkeyValue::Integer(if value { 1 } else { 0 })),
         None => Ok(ValkeyValue::Null),
     }
+}
+
+fn am_delete(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
+    if args.len() != 3 {
+        return Err(ValkeyError::WrongArity);
+    }
+    let key_name = &args[1];
+    let field = parse_utf8_field(&args[2], "field")?;
+
+    // Capture change bytes before calling ctx.call
+    let change_bytes = {
+        let key = ctx.open_key_writable(key_name);
+        let client = key
+            .get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE)?
+            .ok_or(ValkeyError::Str("no such key"))?;
+        client
+            .delete_with_change(field)
+            .map_err(|e| ValkeyError::String(e.to_string()))?
+    }; // key is dropped here
+
+    // Publish change to subscribers if one was generated
+    publish_change(ctx, key_name, change_bytes)?;
+
+    let refs: Vec<&ValkeyString> = args[1..].iter().collect();
+    ctx.replicate("am.delete", &refs[..]);
+    ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.delete", key_name);
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
+    Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
 fn am_putcounter(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
@@ -698,6 +780,15 @@ fn am_putcounter(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.putcounter",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -751,6 +842,15 @@ fn am_inccounter(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.inccounter",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -785,6 +885,15 @@ fn am_puttimestamp(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.puttimestamp",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -835,6 +944,15 @@ fn am_createlist(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.createlist",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -867,6 +985,15 @@ fn am_appendtext(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.appendtext",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -897,6 +1024,15 @@ fn am_appendint(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     let refs: Vec<&ValkeyString> = args[1..].iter().collect();
     ctx.replicate("am.appendint", &refs[..]);
     ctx.notify_keyspace_event(valkey_module::NotifyEvent::MODULE, "am.appendint", key_name);
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -931,6 +1067,15 @@ fn am_appenddouble(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.appenddouble",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -968,6 +1113,15 @@ fn am_appendbool(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
         "am.appendbool",
         key_name,
     );
+
+    // Update search index
+    {
+        let key = ctx.open_key(key_name);
+        if let Ok(Some(client)) = key.get_value::<RedisAutomergeClient>(&VALKEY_AUTOMERGE_TYPE) {
+            try_update_search_index(ctx, &key_name.to_string(), client);
+        }
+    }
+
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
 
@@ -1495,6 +1649,7 @@ valkey_module! {
         ["am.getdouble", am_getdouble, "readonly", 1, 1, 1],
         ["am.putbool", am_putbool, "write deny-oom", 1, 1, 1],
         ["am.getbool", am_getbool, "readonly", 1, 1, 1],
+        ["am.delete", am_delete, "write deny-oom", 1, 1, 1],
         ["am.putcounter", am_putcounter, "write deny-oom", 1, 1, 1],
         ["am.getcounter", am_getcounter, "readonly", 1, 1, 1],
         ["am.inccounter", am_inccounter, "write deny-oom", 1, 1, 1],

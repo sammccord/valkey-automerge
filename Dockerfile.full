@@ -16,15 +16,8 @@ RUN apt-get update && apt-get install -y clang git && rm -rf /var/lib/apt/lists/
 
 WORKDIR /build
 
-# Clone Automerge 3.1.2 from GitHub
-RUN git clone --depth 1 --branch js/automerge-3.1.2 https://github.com/automerge/automerge.git /build/automerge-src
-
 # Copy our valkey-automerge module code
 COPY valkey-automerge/ ./valkey-automerge/
-
-# Update Cargo.toml to use automerge from the cloned git repo
-RUN cd valkey-automerge && \
-  sed -i 's|automerge = ".*"|automerge = { path = "/build/automerge-src/rust/automerge" }|' Cargo.toml
 
 # Build the Valkey module
 RUN cargo build --release --manifest-path valkey-automerge/Cargo.toml
@@ -32,7 +25,7 @@ RUN cargo build --release --manifest-path valkey-automerge/Cargo.toml
 # ============================================================================
 # Stage 2: Build valkey-json module
 # ============================================================================
-FROM debian:bookworm AS json-builder
+FROM debian:trixie AS json-builder
 
 # Install build dependencies for CMake-based build
 RUN apt-get update && apt-get install -y \
@@ -45,24 +38,66 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /build
 
 # Clone valkey-json from official Valkey repository
-RUN git clone --depth 1 --branch unstable https://github.com/valkey-io/valkey-json.git .
+RUN git clone --depth 1 --branch 1.0.2 https://github.com/valkey-io/valkey-json.git .
 
 # Build valkey-json using the provided build script
 RUN ./build.sh
 
 # ============================================================================
-# Stage 3: Runtime image with all modules
+# Stage 3: Build valkey-search module
 # ============================================================================
-FROM valkey/valkey:8.0
+FROM debian:trixie AS search-builder
+
+# Install build dependencies for CMake-based build
+RUN set -eux;   \
+    apt-get update;     \
+    apt-get install -y --no-install-recommends  \
+                        ca-certificates         \
+                        build-essential         \
+                        cmake                   \
+                        git                     \
+                        curl                    \
+                        clang                   \
+                        clangd                  \
+                        g++                     \
+                        libgtest-dev            \
+                        ninja-build             \
+                        libssl-dev              \
+                        clang-tidy              \
+                        clang-format            \
+                        libsystemd-dev          \
+                        pkg-config              \
+                        gcc-12                  \
+                        g++-12                  \
+                    ;\
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 1000;\
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 1000;\
+    apt-get clean && rm -rf /var/lib/apt/lists/* ;
+
+WORKDIR /build
+
+# Clone valkey-json from official Valkey repository
+RUN git clone --depth 1 --branch 1.1.0 https://github.com/valkey-io/valkey-search.git .
+
+# Build valkey-search using the provided build script
+RUN set -eux; \
+    ./build.sh --jobs=4
+
+# ============================================================================
+# Stage 4: Runtime image with all modules
+# ============================================================================
+FROM valkey/valkey:9
 
 # Copy all modules
-COPY --from=automerge-builder /build/valkey-automerge/target/release/libvalkey_automerge.so /usr/lib/valkey/modules/valkey-automerge.so
-COPY --from=json-builder /build/build/src/libjson.so /usr/lib/valkey/modules/libjson.so
+COPY --from=automerge-builder /build/valkey-automerge/target/release/libvalkey_automerge.so /usr/lib/valkey/libautomerge.so
+COPY --from=json-builder /build/build/src/libjson.so /usr/lib/valkey/libjson.so
+COPY --from=search-builder /build/.build-release/libsearch.so /usr/lib/valkey/libsearch.so
 
 # Load all modules on startup
 CMD ["valkey-server", \
-  "--loadmodule", "/usr/lib/valkey/modules/valkey-automerge.so", \
-  "--loadmodule", "/usr/lib/valkey/modules/libjson.so", \
+  "--loadmodule", "/usr/lib/valkey/libjson.so", \
+  "--loadmodule", "/usr/lib/valkey/libsearch.so", \
+  "--loadmodule", "/usr/lib/valkey/libautomerge.so", \
   "--loglevel", "notice", \
   "--logfile", "", \
   "--slowlog-log-slower-than", "0", \

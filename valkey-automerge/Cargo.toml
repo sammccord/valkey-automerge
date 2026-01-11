@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-automerge = "1.0.0-beta.3"
+automerge = { git = "https://github.com/automerge/automerge.git", tag = "js/automerge-3.1.2" }
 valkey-module = "0.1"
 base64 = "0.22"
 serde_json = "1.0"

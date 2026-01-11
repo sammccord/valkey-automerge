@@ -569,6 +569,149 @@ impl RedisAutomergeClient {
         Ok(None)
     }
 
+    /// Delete a value at the specified path.
+    ///
+    /// Removes the field or array element at the given path. For maps, this removes
+    /// the key entirely. For arrays, this removes the element at the index.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the field to delete (e.g., "name", "user.profile.age", "items[0]")
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use redis_automerge::ext::RedisAutomergeClient;
+    ///
+    /// let mut client = RedisAutomergeClient::new();
+    /// client.put_text("user.name", "Alice").unwrap();
+    /// client.put_int("user.age", 30).unwrap();
+    ///
+    /// // Delete the age field
+    /// client.delete("user.age").unwrap();
+    ///
+    /// // age is now gone
+    /// assert_eq!(client.get_int("user.age").unwrap(), None);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The path is invalid or empty
+    /// - The parent path doesn't exist
+    pub fn delete(&mut self, path: &str) -> Result<(), AutomergeError> {
+        let segments = parse_path(path)?;
+
+        if segments.is_empty() {
+            return Err(AutomergeError::Fail);
+        }
+
+        let (parent_path, field_name) = segments.split_at(segments.len() - 1);
+
+        // First check if the parent path exists (read-only check)
+        let parent_obj = if parent_path.is_empty() {
+            ROOT
+        } else {
+            match navigate_path_read(&self.doc, parent_path)? {
+                Some(obj) => obj,
+                None => return Err(AutomergeError::Fail),
+            }
+        };
+
+        // Now create a transaction and delete
+        let mut tx = self.doc.transaction();
+
+        // Delete the field from the parent
+        match &field_name[0] {
+            PathSegment::Key(key) => {
+                tx.delete(&parent_obj, key.as_str())?;
+            }
+            PathSegment::Index(idx) => {
+                tx.delete(&parent_obj, *idx)?;
+            }
+        }
+
+        let (hash, _patch) = tx.commit();
+        if let Some(h) = hash {
+            if let Some(change) = self.doc.get_change_by_hash(&h) {
+                self.aof.push(change.raw_bytes().to_vec());
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete a value and return the raw change bytes.
+    ///
+    /// Like `delete()` but returns Automerge change bytes that can
+    /// be published to other clients for real-time synchronization.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the field to delete
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Vec<u8>)` - Raw change bytes if a change was generated
+    /// - `None` - If no change was needed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use redis_automerge::ext::RedisAutomergeClient;
+    ///
+    /// let mut client = RedisAutomergeClient::new();
+    /// client.put_text("field", "value").unwrap();
+    /// let change = client.delete_with_change("field").unwrap();
+    ///
+    /// if let Some(change_bytes) = change {
+    ///     // Publish to other clients
+    /// }
+    /// ```
+    pub fn delete_with_change(&mut self, path: &str) -> Result<Option<Vec<u8>>, AutomergeError> {
+        let segments = parse_path(path)?;
+
+        if segments.is_empty() {
+            return Err(AutomergeError::Fail);
+        }
+
+        let (parent_path, field_name) = segments.split_at(segments.len() - 1);
+
+        // First check if the parent path exists (read-only check)
+        let parent_obj = if parent_path.is_empty() {
+            ROOT
+        } else {
+            match navigate_path_read(&self.doc, parent_path)? {
+                Some(obj) => obj,
+                None => return Err(AutomergeError::Fail),
+            }
+        };
+
+        // Now create a transaction and delete
+        let mut tx = self.doc.transaction();
+
+        // Delete the field from the parent
+        match &field_name[0] {
+            PathSegment::Key(key) => {
+                tx.delete(&parent_obj, key.as_str())?;
+            }
+            PathSegment::Index(idx) => {
+                tx.delete(&parent_obj, *idx)?;
+            }
+        }
+
+        let (hash, _patch) = tx.commit();
+
+        if let Some(h) = hash {
+            if let Some(change) = self.doc.get_change_by_hash(&h) {
+                let change_bytes = change.raw_bytes().to_vec();
+                self.aof.push(change_bytes.clone());
+                return Ok(Some(change_bytes));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Insert an integer value using a path (e.g., "user.age", "users[0].age", or "$.user.age").
     /// Creates intermediate maps as needed. Array indices must already exist.
     pub fn put_int(&mut self, path: &str, value: i64) -> Result<(), AutomergeError> {
