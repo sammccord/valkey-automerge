@@ -22,7 +22,7 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -30,20 +30,24 @@ jobs:
     strategy:
       matrix:
         include:
-          # Base images (valkey-automerge only)
+          # Base images (valkey-automerge only) - use standard runner
           - variant: debian
             dockerfile: Dockerfile
             suffix: ""
+            runner: ubuntu-latest
           - variant: alpine
             dockerfile: Dockerfile.alpine
             suffix: "-alpine"
-          # Full images (valkey-automerge + valkey-json)
+            runner: ubuntu-latest
+          # Full images (valkey-automerge + valkey-json + valkey-search) - use larger runner
           - variant: full
             dockerfile: Dockerfile.full
             suffix: "-full"
+            runner: linux_32_core_arm
           - variant: full-alpine
             dockerfile: Dockerfile.full-alpine
             suffix: "-full-alpine"
+            runner: linux_32_core_arm
 
     steps:
       - name: Checkout code
