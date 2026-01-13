@@ -43,11 +43,11 @@ jobs:
           - variant: full
             dockerfile: Dockerfile.full
             suffix: "-full"
-            runner: linux_32_core_arm
+            runner: ubuntu-20.04-16core
           - variant: full-alpine
             dockerfile: Dockerfile.full-alpine
             suffix: "-full-alpine"
-            runner: linux_32_core_arm
+            runner: ubuntu-20.04-16core
 
     steps:
       - name: Checkout code
